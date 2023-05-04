@@ -34,6 +34,7 @@ lazy val `otel4s-local` = tlCrossRootProject
 
 lazy val core = crossProject(JVMPlatform, JSPlatform)
   .crossType(CrossType.Pure)
+  .enablePlugins(NoPublishPlugin)
   .in(file("core"))
   .settings(
     name := "otel4s-local",

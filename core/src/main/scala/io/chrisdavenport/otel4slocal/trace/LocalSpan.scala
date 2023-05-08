@@ -47,6 +47,7 @@ Spans encapsulate:
     A list of timestamped Events
     A Status.
 */
+// TODO add references for TracerName, version, url
 case class LocalSpan(
   spanContext: SpanContext, // Needs equality concept
   parentSpan: Option[SpanContext], // Zero Element if Root when reporting to externals - otel wants this

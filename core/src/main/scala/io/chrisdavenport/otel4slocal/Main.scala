@@ -17,9 +17,12 @@ object Main extends IOApp {
       ExternalHelpers.localVault[IO].flatMap{local =>
         LocalOtel4s.build(local, {(s: fs2.Stream[IO, trace.LocalSpan]) => s.evalMap{ls => IO.println(ls)}.compile.drain}).use(otel4s =>
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
+
             tracer.spanBuilder("Test").build.use{ span =>
+
               span.addAttribute(Attribute("test.attribute", "huzzah")) >>
               tracer.spanBuilder("Test2").build.use_
+
             } >> IO.sleep(1.second)
           }
         )

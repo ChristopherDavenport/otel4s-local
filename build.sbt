@@ -49,7 +49,6 @@ lazy val core = crossProject(JVMPlatform, JSPlatform)
 
       "org.typelevel" %%% "vault" % "3.5.0",
       "org.typelevel" %%% "cats-mtl" % "1.3.1",
-
       "org.typelevel" %%% "otel4s-core" % "0.2.1",
 
 

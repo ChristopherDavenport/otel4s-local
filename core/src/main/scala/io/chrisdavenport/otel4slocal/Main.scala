@@ -8,6 +8,7 @@ import org.typelevel.otel4s.{Otel4s, TextMapPropagator}
 import io.chrisdavenport.otel4slocal.trace.LocalSpan
 import scala.concurrent.duration._
 import org.typelevel.otel4s.trace.SpanContext
+import org.typelevel.otel4s.Attribute
 
 object Main extends IOApp {
 
@@ -16,7 +17,8 @@ object Main extends IOApp {
       ExternalHelpers.localVault[IO].flatMap{local =>
         LocalOtel4s.build(local, {(s: fs2.Stream[IO, trace.LocalSpan]) => s.evalMap{ls => IO.println(ls)}.compile.drain}).use(otel4s =>
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
-            tracer.spanBuilder("Test").build.use{ _ =>
+            tracer.spanBuilder("Test").build.use{ span =>
+              span.addAttribute(Attribute("test.attribute", "huzzah")) >>
               tracer.spanBuilder("Test2").build.use_
             } >> IO.sleep(1.second)
           }

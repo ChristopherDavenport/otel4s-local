@@ -81,7 +81,7 @@ object LocalSpan {
 
   case class MutableState(
     name: String,
-    startTime: Option[FiniteDuration], // Optional to create this at runtime?
+    startTime: FiniteDuration, // Optional to create this at runtime?
     endTime: Option[FiniteDuration], // When this is set we are done and report it.
     attributes: List[Attribute[_]],
     droppedAttributes: Int,

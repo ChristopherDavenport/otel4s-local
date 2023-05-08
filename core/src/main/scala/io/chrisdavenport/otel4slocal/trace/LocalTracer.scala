@@ -108,7 +108,8 @@ class LocalTracer[F[_]: Temporal: Random](
           case None =>
             None -> None
         }.flatMap{
-          case Some(ls) => processor.send(ls).void
+          case Some(ls) =>
+            processor.send(ls).void
           case None => Applicative[F].unit
         }
       }
@@ -168,12 +169,12 @@ class LocalTracer[F[_]: Temporal: Random](
           case LocalScoped.Root => None
           case LocalScoped.Spanned(parent) => parent.some
         }
-        // parentSpan <-
+
         // Only None at this point if NoOp
         buildLocalSpan = {(context: SpanContext) =>
           LocalSpan(context, parentSpanContext, kind, LocalSpan.MutableState(
             name,
-            startTime = start.some,
+            startTime = start,
             endTime = None,
             attributes = attributes.toList,
             droppedAttributes = 0,
@@ -191,6 +192,7 @@ class LocalTracer[F[_]: Temporal: Random](
             LocalSpan.createSpanContext(None, true).map(sc => (sc, buildLocalSpan(sc)).some)
           case LocalScoped.Spanned(parent) => LocalSpan.createSpanContext(parent.traceId.some, true).map(sc => (sc, buildLocalSpan(sc)).some)
         }
+
         span: Span[F] <- spanContextOpt match {
           case None => ??? // TODO how to Noop my span
           case Some((sc, localSpan)) =>
@@ -206,7 +208,13 @@ class LocalTracer[F[_]: Temporal: Random](
     def use_ : F[Unit] = use(_ => Applicative[F].unit)
     def use[A](f: Span[F] => F[A]): F[A] = {
       Resource.makeCase(startUnmanaged){
-        case (span, resourceCase) => org.typelevel.otel4s.backdoor.StrategyRunBackend.run(span.backend, strategy(resourceCase))
+        case (span, resourceCase) => {
+          strategy.unapply(resourceCase) match {
+            case Some(finalizer) => org.typelevel.otel4s.backdoor.StrategyRunBackend.run(span.backend, finalizer)
+            case _ => Applicative[F].unit
+          }
+        } >> span.end
+
       }.use{ span =>
         local.local(f(span))(LocalScoped.insertIntoVault(_, LocalScoped.Spanned(span.context)))
       }

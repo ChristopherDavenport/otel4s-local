@@ -2,6 +2,7 @@ package io.chrisdavenport.otel4slocal
 
 import cats._
 import cats.effect._
+import cats.effect.syntax.all._
 import cats.syntax.all._
 import org.typelevel.vault.Vault
 import cats.mtl.Local
@@ -9,9 +10,9 @@ import cats.mtl.Local
 import org.typelevel.otel4s.{ContextPropagators, Otel4s, TextMapPropagator, TextMapGetter, TextMapSetter}
 import org.typelevel.otel4s.metrics.MeterProvider
 import org.typelevel.otel4s.trace.{TracerBuilder, TracerProvider, Tracer, SpanContext, SpanBuilder, Span}
-import cats.effect.std.MapRef
+import cats.effect.std.{MapRef, Random}
 
-class LocalOtel4s[F[_]: Temporal] private (
+class LocalOtel4s[F[_]: Temporal: Random] private (
   local: Local[F, Vault], // How the fiber state interacts with this system
 
   state: MapRef[F, SpanContext, Option[trace.LocalSpan]], // Where we store spans in motion
@@ -36,10 +37,24 @@ class LocalOtel4s[F[_]: Temporal] private (
 }
 
 object LocalOtel4s {
-  def build[F[_]: Temporal](local: Local[F, Vault], consumer: fs2.Stream[F, trace.LocalSpan] => fs2.Stream[F, Nothing]): Resource[F, Otel4s[F]] = {
+  def build[F[_]: Temporal: Random](local: Local[F, Vault], consumer: fs2.Stream[F, trace.LocalSpan] => F[Unit]): Resource[F, Otel4s[F]] = {
     for {
       map <- Resource.eval(MapRef.ofSingleImmutableMap[F, SpanContext, trace.LocalSpan](Map.empty))
       channel <- Resource.eval(fs2.concurrent.Channel.unbounded[F, trace.LocalSpan])
+      _ <- consumer(channel.stream).background
+    } yield new LocalOtel4s[F](
+      local,
+      map,
+      channel
+    )
+  }
+
+
+  def buildState[F[_]: Temporal: Random](local: Local[F, Vault], mapRef: Ref[F, Map[SpanContext, trace.LocalSpan]], consumer: fs2.Stream[F, trace.LocalSpan] => F[Unit]): Resource[F, Otel4s[F]] = {
+    val map = MapRef.fromSingleImmutableMapRef(mapRef)
+    for {
+      channel <- Resource.eval(fs2.concurrent.Channel.unbounded[F, trace.LocalSpan])
+      _ <- consumer(channel.stream).background
     } yield new LocalOtel4s[F](
       local,
       map,

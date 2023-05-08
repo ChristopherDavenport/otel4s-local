@@ -6,14 +6,14 @@ import cats.syntax.all._
 import org.typelevel.vault.Vault
 import cats.mtl.Local
 import org.typelevel.otel4s.trace.{TracerBuilder, TracerProvider, Tracer, SpanContext, SpanBuilder, Span}
-import cats.effect.std.MapRef
+import cats.effect.std.{MapRef, Random}
 
-class LocalTracerBuilder[F[_]: Temporal] private[otel4slocal] (
+class LocalTracerBuilder[F[_]: Temporal: Random] private[otel4slocal] (
   name: String,
   version: Option[String],
   schemaUrl: Option[String],
   enabled: Boolean,
-  
+
   local: Local[F, Vault],
   state: MapRef[F, SpanContext, Option[LocalSpan]], // Where we store spans in motion
   processor: fs2.concurrent.Channel[F, LocalSpan] // This is how we handle our completed spans

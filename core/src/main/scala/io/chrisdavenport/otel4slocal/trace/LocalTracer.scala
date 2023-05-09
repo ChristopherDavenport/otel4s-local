@@ -6,13 +6,14 @@ import cats.syntax.all._
 import org.typelevel.vault.Vault
 import cats.mtl.Local
 
-import org.typelevel.otel4s.{Attribute, TextMapGetter}
+import org.typelevel.otel4s.{Attribute, TextMapGetter, TextMapPropagator}
 import org.typelevel.otel4s.meta.InstrumentMeta
 import org.typelevel.otel4s.trace.{TracerBuilder, TracerProvider, Tracer, SpanContext, SpanBuilder, Span, SpanOps, SpanFinalizer, Status}
 import cats.effect.std.{MapRef, Random}
 import org.typelevel.otel4s.trace.SpanKind
 import scala.concurrent.duration.FiniteDuration
 import org.typelevel.otel4s.trace.Span.Backend
+import io.chrisdavenport.otel4slocal.LocalOtel4s
 
 class LocalTracer[F[_]: Temporal: Random](
   tracerName: String,
@@ -20,9 +21,9 @@ class LocalTracer[F[_]: Temporal: Random](
   tracerSchemaUrl: Option[String],
   enabled: Boolean,
   local: Local[F, Vault],
+  textMapPropagator: TextMapPropagator[F],
 
   state: MapRef[F, SpanContext, Option[LocalSpan]], // Where we store spans in motion
-
   processor: fs2.concurrent.Channel[F, LocalSpan] // This is how we handle our completed spans
 ) extends Tracer[F]{ tracer =>
 
@@ -31,7 +32,11 @@ class LocalTracer[F[_]: Temporal: Random](
     case _ => None
   }
 
-  def joinOrRoot[A, C: TextMapGetter](carrier: C)(fa: F[A]): F[A] = fa
+  def joinOrRoot[A, C: TextMapGetter](carrier: C)(fa: F[A]): F[A] = {
+    local.local(fa)(vault =>
+      textMapPropagator.extract(vault, carrier)
+    )
+  }
   def meta: Tracer.Meta[F] = new Tracer.Meta[F]{
     // Members declared in org.typelevel.otel4s.meta.InstrumentMeta
     def isEnabled: Boolean = enabled

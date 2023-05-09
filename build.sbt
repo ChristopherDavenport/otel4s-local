@@ -25,14 +25,14 @@ val fs2V = "3.6.1"
 val http4sV = "0.23.18"
 val circeV = "0.14.5"
 val doobieV = "1.0.0-RC2"
-val munitCatsEffectV = "1.0.7"
+val munitCatsEffectV = "2.0.0-M3"
 
 
 // Projects
 lazy val `otel4s-local` = tlCrossRootProject
   .aggregate(core)
 
-lazy val core = crossProject(JVMPlatform, JSPlatform)
+lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("core"))
@@ -52,11 +52,18 @@ lazy val core = crossProject(JVMPlatform, JSPlatform)
       "org.typelevel" %%% "otel4s-core" % "0.2.1",
 
 
-      "org.typelevel"               %%% "munit-cats-effect-3"        % munitCatsEffectV         % Test,
+      "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
 
     )
   ).jsSettings(
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
+  ).nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
+  .platformsSettings(NativePlatform)(
+    libraryDependencies ++= Seq(
+      "com.armanbilge" %%% "epollcat" % "0.1.4" % Test
+    ),
+    Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
+    Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
 
 lazy val site = project.in(file("site"))

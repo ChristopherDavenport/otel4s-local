@@ -12,6 +12,8 @@ import org.typelevel.otel4s.metrics.MeterProvider
 import org.typelevel.otel4s.trace.{TracerBuilder, TracerProvider, Tracer, SpanContext, SpanBuilder, Span}
 import cats.effect.std.{MapRef, Random}
 
+import scala.concurrent.duration._
+
 class LocalOtel4s[F[_]: Temporal: Random] private (
   local: Local[F, Vault], // How the fiber state interacts with this system
 
@@ -37,24 +39,23 @@ class LocalOtel4s[F[_]: Temporal: Random] private (
 }
 
 object LocalOtel4s {
-  def build[F[_]: Temporal: Random](local: Local[F, Vault], consumer: fs2.Stream[F, trace.LocalSpan] => F[Unit]): Resource[F, Otel4s[F]] = {
-    for {
-      map <- Resource.eval(MapRef.ofSingleImmutableMap[F, SpanContext, trace.LocalSpan](Map.empty))
-      channel <- Resource.eval(fs2.concurrent.Channel.unbounded[F, trace.LocalSpan])
-      _ <- consumer(channel.stream).background
-    } yield new LocalOtel4s[F](
-      local,
-      map,
-      channel
-    )
-  }
+  def build[F[_]: Temporal: Random](
+    local: Local[F, Vault],
+    consumer: fs2.Stream[F, trace.LocalSpan] => F[Unit],
+    timeoutSpanClose: FiniteDuration = 5.seconds,
+    timeoutChannelProcessClose: FiniteDuration = 5.seconds
+  ): Resource[F, Otel4s[F]] = {
 
-
-  def buildState[F[_]: Temporal: Random](local: Local[F, Vault], mapRef: Ref[F, Map[SpanContext, trace.LocalSpan]], consumer: fs2.Stream[F, trace.LocalSpan] => F[Unit]): Resource[F, Otel4s[F]] = {
-    val map = MapRef.fromSingleImmutableMapRef(mapRef)
     for {
+      // This may be too contentious at some point
+      state <- Resource.eval(Ref[F].of(Map.empty[SpanContext, trace.LocalSpan]))
+      map = MapRef.fromSingleImmutableMapRef(state)
       channel <- Resource.eval(fs2.concurrent.Channel.unbounded[F, trace.LocalSpan])
-      _ <- consumer(channel.stream).background
+      _ <- Resource.make(consumer(channel.stream).start)(fiber => fiber.join.void.timeoutTo(timeoutChannelProcessClose, new RuntimeException("LocalOtel4s: Failed to Process Channel Before Shutdown").raiseError[F, Unit]))
+      _ <- Resource.make(Applicative[F].unit){_ =>
+        def check: F[Unit] = state.get.flatMap(map => if (map.isEmpty) channel.close.void else Concurrent[F].cede >> check)
+        check.timeoutTo(timeoutSpanClose, new RuntimeException("LocalOtel4s: Current spans did not close prior to resource shutdown").raiseError[F, Unit])
+      }
     } yield new LocalOtel4s[F](
       local,
       map,

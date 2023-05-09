@@ -52,7 +52,8 @@ case class LocalSpan(
   spanContext: SpanContext, // Needs equality concept
   parentSpan: Option[SpanContext], // Zero Element if Root when reporting to externals - otel wants this
   kind: SpanKind, // Need typed model for kind, this is editable?
-  mutable: LocalSpan.MutableState
+  mutable: LocalSpan.MutableState,
+  tracerState: LocalSpan.TracerState
 )
 
 object LocalSpan {
@@ -70,6 +71,9 @@ object LocalSpan {
 
   def create(traceIdBV: ByteVector, spanIdBV: ByteVector, remote: Boolean, sampling: Boolean): SpanContext =
     new SpanContext {
+
+      override def toString(): String = s"SpanContext(traceIdHex=${traceIdHex},spanIdHex=${spanIdHex}, isRemote=${isRemote}, sampling=${samplingDecision}, isValid=${isValid})"
+
       def isRemote: Boolean = remote
       def isValid: Boolean = true
       def samplingDecision: SamplingDecision = SamplingDecision.fromBoolean(sampling)
@@ -78,6 +82,8 @@ object LocalSpan {
       def traceId: scodec.bits.ByteVector = traceIdBV
       def traceIdHex: String = traceId.toHex
     }
+
+
 
 
   case class MutableState(
@@ -93,6 +99,12 @@ object LocalSpan {
 
     status: org.typelevel.otel4s.trace.Status,
     statusDescription: Option[String],
+  )
+
+  case class TracerState(
+    name: String,
+    version: Option[String],
+    schemaUrl: Option[String],
   )
 
 

@@ -15,9 +15,9 @@ import scala.concurrent.duration.FiniteDuration
 import org.typelevel.otel4s.trace.Span.Backend
 
 class LocalTracer[F[_]: Temporal: Random](
-  name: String,
-  version: Option[String],
-  schemaUrl: Option[String],
+  tracerName: String,
+  tracerVersion: Option[String],
+  tracerSchemaUrl: Option[String],
   enabled: Boolean,
   local: Local[F, Vault],
 
@@ -172,7 +172,11 @@ class LocalTracer[F[_]: Temporal: Random](
 
         // Only None at this point if NoOp
         buildLocalSpan = {(context: SpanContext) =>
-          LocalSpan(context, parentSpanContext, kind, LocalSpan.MutableState(
+          LocalSpan(
+            context,
+            parentSpanContext,
+            kind,
+            LocalSpan.MutableState(
             name,
             startTime = start,
             endTime = None,
@@ -184,7 +188,10 @@ class LocalTracer[F[_]: Temporal: Random](
             droppedLinks = 0,
             status = Status.Unset,
             statusDescription = None,
-          ))
+
+            ),
+            LocalSpan.TracerState(tracerName, tracerVersion, tracerSchemaUrl)
+          )
         }
         spanContextOpt <- scopeParent match {
           case LocalScoped.Noop => None.pure[F]
@@ -194,11 +201,10 @@ class LocalTracer[F[_]: Temporal: Random](
         }
 
         span: Span[F] <- spanContextOpt match {
-          case None => ??? // TODO how to Noop my span
+          case None => meta.noopSpanBuilder.build.startUnmanaged
           case Some((sc, localSpan)) =>
             val ref = state(sc)
             val span: Span[F] = new InternalSpan(sc, ref)
-
             ref.update(_ => localSpan.some).as(span)
         }
 

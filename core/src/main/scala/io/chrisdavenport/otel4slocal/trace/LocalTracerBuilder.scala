@@ -31,6 +31,6 @@ class LocalTracerBuilder[F[_]: Temporal: Random] private[otel4slocal] (
   def withVersion(version: String) = copy(version = version.some)
 
 
-  def get: F[Tracer[F]] = new LocalTracer[F](name, version, schemaUrl, enabled, local, textMapPropagator, state, processor).pure[F]
+  def get: F[Tracer[F]] = new LocalTracer[F](name, version, schemaUrl, enabled, local, textMapPropagator, state, processor).pure[F].widen
 
 }

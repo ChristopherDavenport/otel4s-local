@@ -92,8 +92,8 @@ class LocalTracer[F[_]: Temporal: Random](
  */
   def addAttribute[A](attribute: Attribute[A]) =
     copy(attributes = self.attributes :+ attribute)
-  def addAttributes(attributes: Seq[Attribute[?]]) = copy(attributes = self.attributes.appendedAll(attributes))
-  def addLink(spanContext: SpanContext, attributes: Seq[Attribute[_]])=
+  def addAttributes(attributes: Attribute[_]*) = copy(attributes = self.attributes.appendedAll(attributes))
+  def addLink(spanContext: SpanContext, attributes: Attribute[_]*)=
     copy(links = self.links :+ (spanContext, attributes))
   def root = copy(parent = Parent.Root.some)
   def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) =
@@ -170,7 +170,7 @@ class LocalTracer[F[_]: Temporal: Random](
             case Some((sc, localSpan)) =>
               val ref = state(sc)
               val span: Span[F] = new Span[F]{
-                def backend = bacendImpl(sc, ref, processor, tracer.meta)
+                def backend = backendImpl(sc, ref, processor, tracer.meta)
               }
               ref.update(_ => localSpan.some).as(span)
           }
@@ -195,13 +195,11 @@ class LocalTracer[F[_]: Temporal: Random](
     }
 
     def wrapResource[A](resource: Resource[F, A])(implicit ev: InternalSpanBuilder.this.Result =:=Span[F]): SpanBuilder.Aux[F,Span.Res[F, A]] = {
-      new SpannedResource(resource, name, attributes, links, strategy, parent, kind, startTimeStamp)
+      new SpannedResourceBuilder[A](resource, name, attributes, links, strategy, parent, kind, startTimeStamp)
     }
   }
 
-
-
-  class SpannedResource[A](
+  class SpannedResourceBuilder[A](
     resource: Resource[F, A],
     name: String,
     attributes: Seq[Attribute[_]],
@@ -211,6 +209,7 @@ class LocalTracer[F[_]: Temporal: Random](
     kind: SpanKind,
     startTimeStamp: Option[FiniteDuration],
   ) extends SpanBuilder[F]{ self =>
+    // Res <: Span[F]
     type Result = Span.Res[F, A]
 
     def copy(
@@ -221,7 +220,7 @@ class LocalTracer[F[_]: Temporal: Random](
       parent: Option[Parent] = self.parent,
       kind: SpanKind = self.kind,
       startTimeStamp: Option[FiniteDuration] = self.startTimeStamp,
-    ) = new SpannedResource(
+    ) = new SpannedResourceBuilder[A](
       resource,
       name,
       attributes,
@@ -236,8 +235,8 @@ class LocalTracer[F[_]: Temporal: Random](
  */
   def addAttribute[A](attribute: Attribute[A]) =
     copy(attributes = self.attributes :+ attribute)
-  def addAttributes(attributes: Seq[Attribute[?]]) = copy(attributes = self.attributes.appendedAll(attributes))
-  def addLink(spanContext: SpanContext, attributes: Seq[Attribute[_]])=
+  def addAttributes(attributes: Attribute[_]*) = copy(attributes = self.attributes.appendedAll(attributes))
+  def addLink(spanContext: SpanContext, attributes: Attribute[_]*)=
     copy(links = self.links :+ (spanContext, attributes))
   def root = copy(parent = Parent.Root.some)
   def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) =
@@ -251,12 +250,14 @@ class LocalTracer[F[_]: Temporal: Random](
     copy(startTimeStamp = timestamp.some)
 
 
-  def build: SpanOps.Aux[F, Span.Res[F, A]] = new SpanOps[F] { spanOps =>
+  // Impossible
+  def wrapResource[A](resource: Resource[F, A])(implicit ev: Result =:= Span[F]): SpanBuilder.Aux[F,Span.Res[F, A]] = ???
+
+
+  def build: SpanOps.Aux[F, Span.Res[F, A]] = new SpanOps[F] {
     type Result = Span.Res[F,A]
     // Impossible
     def startUnmanaged(implicit ev: Res[F, A] =:= Span[F]): F[Span[F]] = ???
-    // Impossible
-    def wrapResource[A](resource: cats.effect.kernel.Resource[F, A])(implicit ev: SpanBuilder.this.Result =:= org.typelevel.otel4s.trace.Span[F]): SpanBuilder.Aux[F,Span.Res[F, A]] = ???
 
     /** As seen from class $anon, the missing signatures are as follows.
      *  For convenience, these are usable as stub implementations.
@@ -317,8 +318,8 @@ class LocalTracer[F[_]: Temporal: Random](
             case None => meta.noopSpanBuilder.build.startUnmanaged
             case Some((sc, localSpan)) =>
               val ref = state(sc)
-              val span: Span[F] = new Span{
-                def backend: Backend[F] = bacendImpl(sc, ref, processor, tracer.meta)
+              val span: Span[F] = new Span[F]{
+                def backend: Backend[F] = backendImpl(sc, ref, processor, tracer.meta)
               }
               ref.update(_ => localSpan.some).as(span)
           }
@@ -340,12 +341,12 @@ class LocalTracer[F[_]: Temporal: Random](
           Resource.make{
             tracer.spanBuilder("acquire").withParent(generalSpan.context).build
             .surround(resource.allocated)
-          }{ case (a, release) =>
+          }{ case (_, release) =>
             tracer.spanBuilder("release").withParent(generalSpan.context).build
             .surround(release)
         }.map{ case (a, _) => new Span.Res[F, A]{
           def value = a
-          def backend: Backend[F] = backend
+          def backend: Backend[F] = generalSpan.backend
         }}
         }.use{ baseSpan =>
           tracer.spanBuilder("use").withParent(baseSpan.context).build.use{span =>
@@ -358,8 +359,6 @@ class LocalTracer[F[_]: Temporal: Random](
         }
       }
     }
-
-
   }
 
   def spanBuilder(name: String): SpanBuilder.Aux[F,Span[F]] = {
@@ -374,7 +373,7 @@ class LocalTracer[F[_]: Temporal: Random](
     )
   }
 
-  private def bacendImpl[F[_]: Temporal](
+  private def backendImpl[F[_]: Temporal](
     spanContext: SpanContext,
     ref: Ref[F, Option[LocalSpan]],
     processor: fs2.concurrent.Channel[F, LocalSpan],
@@ -396,21 +395,22 @@ class LocalTracer[F[_]: Temporal: Random](
         Temporal[F].realTime.flatMap(endF),
         endF,
       ) {
-        def addAttributes(attributes: Seq[Attribute[?]]): F[Unit] = ref.update{
+        def addAttributes(attributes: Attribute[_]*): F[Unit] = ref.update{
           case None => None
           case Some(value) => value.copy(mutable = value.mutable.copy(attributes = value.mutable.attributes.appendedAll(attributes))).some
         }
-        def addEvent(name: String, attributes: Seq[Attribute[_]]): F[Unit] =
-          Clock[F].realTime.flatMap(addEvent(name, _, attributes))
-        def addEvent(name: String, timestamp: FiniteDuration, attributes:Seq[Attribute[?]]): F[Unit] = ref.update{
+        def addEvent(name: String, attributes: org.typelevel.otel4s.Attribute[_]*): F[Unit] = //???
+        // def addEvent(name: String, attributes: Seq[Attribute[_]]): F[Unit] =
+          Clock[F].realTime.flatMap(addEvent(name, _, attributes:_*))
+        def addEvent(name: String, timestamp: FiniteDuration, attributes: Attribute[_]*): F[Unit] = ref.update{
           case None => None
           case Some(value) => value.copy(mutable = value.mutable.copy(events = value.mutable.events.appended(LocalEvent(timestamp, name, attributes.toList, 0)))).some
         }
         def context: SpanContext = spanContext
         def meta: InstrumentMeta[F] = instrumentMeta
 
-        def recordException(exception: Throwable, attributes: Seq[Attribute[_]]):F[Unit] =
-          addAttributes(attributes.appended(Attribute("error.throwable", exception.toString()))) // TODO whatever this does for java.
+        def recordException(exception: Throwable, attributes: Attribute[_]*):F[Unit] =
+          addAttributes(attributes.appended(Attribute("error.throwable", exception.toString())):_*) // TODO whatever this does for java.
 
         def setStatus(status: Status): F[Unit] = ref.update {
           case None => None

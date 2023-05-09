@@ -19,10 +19,14 @@ object Main extends IOApp {
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
             tracer.spanBuilder("Test").build.use{ span =>
               span.addAttribute(Attribute("test.attribute", "huzzah")) >>
-              tracer.spanBuilder("Test2").build.use_ >>
-              // Noop Working
+              tracer.spanBuilder("Test2").build.use_ >> // Normal
+              tracer.spanBuilder("Resource").wrapResource(
+                Resource.make(tracer.spanBuilder("inside create").build.use_)(_ => tracer.spanBuilder("inside shutdown").build.use_)
+              ).build.use{_ =>
+                tracer.spanBuilder("inside use").build.use_
+              } >> // Resource
               tracer.noopScope(
-                tracer.spanBuilder("Test3").build.use_
+                tracer.spanBuilder("Test3").build.use_ // Noop Working
               )
             }
           }

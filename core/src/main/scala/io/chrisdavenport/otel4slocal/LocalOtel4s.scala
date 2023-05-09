@@ -11,8 +11,14 @@ import org.typelevel.otel4s.{ContextPropagators, Otel4s, TextMapPropagator, Text
 import org.typelevel.otel4s.metrics.MeterProvider
 import org.typelevel.otel4s.trace.{TracerBuilder, TracerProvider, Tracer, SpanContext, SpanBuilder, Span}
 import cats.effect.std.{MapRef, Random}
+import scodec.bits._
 
 import scala.concurrent.duration._
+import io.chrisdavenport.otel4slocal.trace.LocalScoped
+import org.typelevel.otel4s.trace.SamplingDecision
+import io.chrisdavenport.otel4slocal.trace.LocalScoped.Root
+import io.chrisdavenport.otel4slocal.trace.LocalScoped.Noop
+import io.chrisdavenport.otel4slocal.trace.LocalScoped.Spanned
 
 class LocalOtel4s[F[_]: Temporal: Random] private (
   local: Local[F, Vault], // How the fiber state interacts with this system
@@ -26,10 +32,53 @@ class LocalOtel4s[F[_]: Temporal: Random] private (
 
 
   def propagators: ContextPropagators[F] = new ContextPropagators[F] {
+    val Extract = "([0-9]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})".r
+    val invalidTraceId = hex"00000000000000000000000000000000"
+    val invalidSpanId = hex"0000000000000000"
     def textMapPropagator: TextMapPropagator[F] = new TextMapPropagator[F] {
-      def extract[A: TextMapGetter](ctx: Vault, carrier: A): Vault =
-        ???
-      def inject[A: TextMapSetter](ctx: Vault, carrier: A): F[Unit] = ???
+      def extract[A](ctx: Vault, carrier: A)(implicit T: TextMapGetter[A]): Vault = {
+        val parent = T.get(carrier, "traceparent").orElse(T.get(carrier, "TRACEPARENT"))
+        parent.fold(ctx){
+          case Extract(_, traceIdS, parentIdS, traceFlagS) =>
+            (
+              ByteVector.fromHex(traceIdS)
+                .flatTap(bv => Alternative[Option].guard(bv != invalidTraceId)),
+              ByteVector.fromHex(parentIdS)
+                .flatTap(bv => Alternative[Option].guard(bv != invalidSpanId)),
+              ByteVector.fromHex(traceFlagS)
+            ).mapN{ case (traceIdBV, parentIdBV, traceFlag) =>
+              val sampled = traceFlag.bits(8)
+              val sc = new SpanContext {
+                def isRemote: Boolean = true
+                def isValid: Boolean = true
+                def samplingDecision: org.typelevel.otel4s.trace.SamplingDecision = SamplingDecision.fromBoolean(sampled)
+                def spanId: scodec.bits.ByteVector = parentIdBV
+                def spanIdHex: String = parentIdS
+                def traceId: scodec.bits.ByteVector = traceIdBV
+                def traceIdHex: String = traceIdS
+
+              }
+              LocalScoped.insertIntoVault(ctx, LocalScoped.Spanned(sc))
+
+            }.getOrElse(ctx)
+
+          case _ => ctx
+
+
+        }
+
+      }
+      def inject[A](ctx: Vault, carrier: A)(implicit T: TextMapSetter[A]): F[Unit] = {
+        LocalScoped.extractFromVault(ctx) match {
+          case LocalScoped.Root => Applicative[F].unit
+          case LocalScoped.Noop => Applicative[F].unit
+          case LocalScoped.Spanned(spanContext) => Applicative[F].unit.map{_ => // Cheat the evil
+            val sampled = BitVector(0).insert(8, spanContext.samplingDecision.isSampled).bytes.toHex
+            val s = s"00-${spanContext.traceIdHex}-${spanContext.spanIdHex}-${sampled}"
+            T.unsafeSet(carrier, "traceparent", s)
+          }
+        }
+      }
     }
   }
   def tracerProvider: TracerProvider[F] = new TracerProvider[F] {

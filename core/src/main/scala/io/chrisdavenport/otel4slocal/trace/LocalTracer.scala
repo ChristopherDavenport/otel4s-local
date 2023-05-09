@@ -25,11 +25,12 @@ class LocalTracer[F[_]: Temporal: Random](
 
   processor: fs2.concurrent.Channel[F, LocalSpan] // This is how we handle our completed spans
 ) extends Tracer[F]{ tracer =>
-  def childScope[A](parent: SpanContext)(fa: F[A]): F[A] = ???
+
   def currentSpanContext: F[Option[SpanContext]] = local.ask.map(LocalScoped.extractFromVault).map{
     case LocalScoped.Spanned(context) => context.some
     case _ => None
   }
+
   def joinOrRoot[A, C: TextMapGetter](carrier: C)(fa: F[A]): F[A] = fa
   def meta: Tracer.Meta[F] = new Tracer.Meta[F]{
     // Members declared in org.typelevel.otel4s.meta.InstrumentMeta
@@ -41,6 +42,8 @@ class LocalTracer[F[_]: Temporal: Random](
       Tracer.noop.meta.noopResSpan(resource)
     def noopSpanBuilder:SpanBuilder.Aux[F,Span[F]] = SpanBuilder.noop(Span.Backend.noop)
   }
+
+  def childScope[A](parent: SpanContext)(fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Spanned(parent)))
   def noopScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Noop))
   def rootScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Root))
 

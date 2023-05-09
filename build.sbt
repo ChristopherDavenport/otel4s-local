@@ -30,7 +30,7 @@ val munitCatsEffectV = "2.0.0-M3"
 
 // Projects
 lazy val `otel4s-local` = tlCrossRootProject
-  .aggregate(core, examples)
+  .aggregate(core, otel, examples)
 
 lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
@@ -50,7 +50,6 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
       "org.typelevel" %%% "vault" % "3.5.0",
       "org.typelevel" %%% "cats-mtl" % "1.3.1",
       "org.typelevel" %%% "otel4s-core" % "0.2.1",
-
       "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
 
     )
@@ -64,6 +63,37 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
+
+// lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+  // .crossType(CrossType.Pure) // doesnt
+lazy val otel = project
+  .in(file("otel"))
+  .enablePlugins(Http4sGrpcPlugin)
+  .settings(
+    name := "otel4s-local-otel",
+
+    // libraryDependencies ++= Seq(
+    //   "org.typelevel"               %%% "cats-core"                  % catsV,
+    //   "org.typelevel"               %%% "cats-effect"                % catsEffectV,
+
+    //   "co.fs2"                      %%% "fs2-core"                   % fs2V,
+    //   "co.fs2"                      %%% "fs2-io"                     % fs2V,
+
+    //   "org.typelevel" %%% "vault" % "3.5.0",
+    //   "org.typelevel" %%% "cats-mtl" % "1.3.1",
+    //   "org.typelevel" %%% "otel4s-core" % "0.2.1",
+
+    //   "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
+
+    // ),
+    Compile / PB.targets ++= Seq(
+      scalapb.gen(grpc = false) -> (Compile / sourceManaged).value / "scalapb"
+    )
+  )
+  // ).jsSettings(
+  //   scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
+  // )
+
 
 lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)

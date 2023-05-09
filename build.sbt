@@ -30,7 +30,7 @@ val munitCatsEffectV = "2.0.0-M3"
 
 // Projects
 lazy val `otel4s-local` = tlCrossRootProject
-  .aggregate(core)
+  .aggregate(core, examples)
 
 lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
@@ -51,7 +51,6 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
       "org.typelevel" %%% "cats-mtl" % "1.3.1",
       "org.typelevel" %%% "otel4s-core" % "0.2.1",
 
-
       "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
 
     )
@@ -61,6 +60,24 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .platformsSettings(NativePlatform)(
     libraryDependencies ++= Seq(
       "com.armanbilge" %%% "epollcat" % "0.1.4" % Test
+    ),
+    Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
+    Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
+  )
+
+lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+  .crossType(CrossType.Pure)
+  .enablePlugins(NoPublishPlugin)
+  .in(file("examples"))
+  .dependsOn(core)
+  .settings(
+    name := "otel4s-local-examples",
+  ).jsSettings(
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
+  ).nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
+  .platformsSettings(NativePlatform)(
+    libraryDependencies ++= Seq(
+      "com.armanbilge" %%% "epollcat" % "0.1.4"
     ),
     Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")

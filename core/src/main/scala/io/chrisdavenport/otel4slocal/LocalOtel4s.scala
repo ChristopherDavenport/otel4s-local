@@ -30,7 +30,7 @@ class LocalOtel4s[F[_]: Temporal: Random] private (
   // Not doing metrics yet
   def meterProvider: MeterProvider[F] = MeterProvider.noop[F]
 
-  def propagators: ContextPropagators[F] = LocalOtel4s.w3cPropagators[F] // TODO should require sync :(
+  def propagators: ContextPropagators[F] = LocalOtel4s.w3cPropagators[F] // TODO should require sync, allow noop :(
 
   def tracerProvider: TracerProvider[F] = new TracerProvider[F] {
     def tracer(name: String): TracerBuilder[F] = new trace.LocalTracerBuilder[F](name, None, None, true, local, propagators.textMapPropagator, state, processor)
@@ -63,6 +63,24 @@ object LocalOtel4s {
       channel
     )
   }
+
+  def localVault[F[_]: LiftIO: MonadCancelThrow]: F[Local[F, Vault]] = {
+    LiftIO[F].liftIO(IOLocal(Vault.empty)).map(localForIoLocal(_))
+  }
+
+  private def localForIoLocal[F[_]: MonadCancelThrow: LiftIO, E](
+      ioLocal: IOLocal[E]
+  ): Local[F, E] =
+    new Local[F, E] {
+      def applicative =
+        Applicative[F]
+      def ask[E2 >: E] =
+        Functor[F].widen[E, E2](ioLocal.get.to[F])
+      def local[A](fa: F[A])(f: E => E): F[A] =
+        MonadCancelThrow[F].bracket(ioLocal.modify(e => (f(e), e)).to[F])(_ =>
+          fa
+        )(ioLocal.set(_).to[F])
+    }
 
   def w3cPropagators[F[_]: Applicative] = new ContextPropagators[F] {
     val Extract = "([0-9]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})".r

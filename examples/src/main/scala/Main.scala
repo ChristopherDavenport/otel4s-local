@@ -14,7 +14,7 @@ object Main extends IOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     cats.effect.std.Random.scalaUtilRandom[IO].flatMap{ implicit R: cats.effect.std.Random[IO] =>
-      ExternalHelpers.localVault[IO].flatMap{local =>
+      LocalOtel4s.localVault[IO].flatMap{local =>
         LocalOtel4s.build(local, {(s: fs2.Stream[IO, trace.LocalSpan]) => s.evalMap{ls => IO.println(ls)}.compile.drain}).use(otel4s =>
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
             tracer.spanBuilder("Test").build.use{ span =>
@@ -34,34 +34,5 @@ object Main extends IOApp {
       }
     }
   }.as(ExitCode.Success)
-
-}
-
-import cats.syntax.all._
-import cats.effect._
-import cats.mtl.Local
-import cats._
-import org.typelevel.vault.Vault
-
-object ExternalHelpers {
-
-  def localVault[F[_]: LiftIO: MonadCancelThrow]: F[Local[F, Vault]] = {
-    LiftIO[F].liftIO(IOLocal(Vault.empty)).map(localForIoLocal(_))
-  }
-
-  def localForIoLocal[F[_]: MonadCancelThrow: LiftIO, E](
-      ioLocal: IOLocal[E]
-  ): Local[F, E] =
-    new Local[F, E] {
-      def applicative =
-        Applicative[F]
-      def ask[E2 >: E] =
-        Functor[F].widen[E, E2](ioLocal.get.to[F])
-      def local[A](fa: F[A])(f: E => E): F[A] =
-        MonadCancelThrow[F].bracket(ioLocal.modify(e => (f(e), e)).to[F])(_ =>
-          fa
-        )(ioLocal.set(_).to[F])
-    }
-
 
 }

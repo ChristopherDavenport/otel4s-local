@@ -33,11 +33,13 @@ import io.opentelemetry.proto.trace.v1.trace.Span
 import io.opentelemetry.proto.common.v1.common.KeyValue
 import io.opentelemetry.proto.common.v1.common.AnyValue
 import com.google.protobuf.ByteString
+import org.typelevel.otel4s.ContextPropagators
 
 object Http4sGrpcOtel {
 
   def fromLocal[F[_]: Async: Network: Random](
     local: Local[F, Vault],
+    propagator: ContextPropagators[F],
     otelUri: Uri,
     timeoutSpanClose: FiniteDuration = 5.seconds,
     timeoutChannelProcessClose: FiniteDuration = 5.seconds
@@ -46,8 +48,9 @@ object Http4sGrpcOtel {
       traceService => 
 
       LocalOtel4s.build(
-        local, 
-        {(s: Stream[F, LocalSpan]) => s.chunks.evalMap(processChunk(traceService, _)).compile.drain},
+        local,
+        propagator,
+        {(s: Stream[F, LocalSpan]) => s.chunks.evalMap(processChunk(traceService, _)).drain},
         timeoutSpanClose,
         timeoutChannelProcessClose
       )

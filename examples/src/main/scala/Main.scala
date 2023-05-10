@@ -9,13 +9,16 @@ import io.chrisdavenport.otel4slocal.trace.LocalSpan
 import scala.concurrent.duration._
 import org.typelevel.otel4s.trace.SpanContext
 import org.typelevel.otel4s.Attribute
+import org.http4s.implicits._
+import io.chrisdavenport.crossplatformioapp.CrossPlatformIOApp
 
-object Main extends IOApp {
+object Main extends CrossPlatformIOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     cats.effect.std.Random.scalaUtilRandom[IO].flatMap{ implicit R: cats.effect.std.Random[IO] =>
       LocalOtel4s.localVault[IO].flatMap{local =>
-        LocalOtel4s.build(local, {(s: fs2.Stream[IO, trace.LocalSpan]) => s.evalMap{ls => IO.println(ls)}.compile.drain}).use(otel4s =>
+        io.chrisdavenport.otel4slocal.otel.Http4sGrpcOtel.fromLocal(local, uri"http://localhost:4317").use( otel4s =>
+        // LocalOtel4s.build(local, {(s: fs2.Stream[IO, trace.LocalSpan]) => s.evalMap{ls => IO.println(ls)}.compile.drain}).use(otel4s =>
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
             tracer.spanBuilder("Test").build.use{ span =>
               span.addAttribute(Attribute("test.attribute", "huzzah")) >>

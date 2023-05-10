@@ -64,7 +64,7 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
 
-lazy val otel = crossProject(JVMPlatform, JSPlatform)
+lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .in(file("otel"))
   .enablePlugins(Http4sGrpcPlugin)
@@ -86,7 +86,7 @@ lazy val otel = crossProject(JVMPlatform, JSPlatform)
   )
 
 
-lazy val examples = crossProject(JVMPlatform, JSPlatform)
+lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("examples"))

@@ -64,7 +64,7 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
 
-lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+lazy val otel = crossProject(JVMPlatform, JSPlatform)
   .crossType(CrossType.Pure)
   .in(file("otel"))
   .enablePlugins(Http4sGrpcPlugin)
@@ -86,7 +86,7 @@ lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   )
 
 
-lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+lazy val examples = crossProject(JVMPlatform, JSPlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("examples"))
@@ -98,16 +98,13 @@ lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     )
   ).jsSettings(
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
-    // mainClass := Some("io.chrisdavenport.otel4slocal.Main"),
     scalaJSUseMainModuleInitializer := true,
-  ).nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
-  .platformsSettings(NativePlatform)(
-    libraryDependencies ++= Seq(
-      "com.armanbilge" %%% "epollcat" % "0.1.4"
-    ),
-    Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
-    Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
+  // .nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
+  // .platformsSettings(NativePlatform)(
+  //   Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
+  //   Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
+  // )
 
 lazy val site = project.in(file("site"))
   .enablePlugins(TypelevelSitePlugin)

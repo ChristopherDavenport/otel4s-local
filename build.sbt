@@ -64,46 +64,42 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
 
-// lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
-  // .crossType(CrossType.Pure) // doesnt
-lazy val otel = project
+lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+  .crossType(CrossType.Pure)
   .in(file("otel"))
   .enablePlugins(Http4sGrpcPlugin)
+  .enablePlugins(NoPublishPlugin)
+  .dependsOn(core)
   .settings(
     name := "otel4s-local-otel",
+    Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
 
-    // libraryDependencies ++= Seq(
-    //   "org.typelevel"               %%% "cats-core"                  % catsV,
-    //   "org.typelevel"               %%% "cats-effect"                % catsEffectV,
+    libraryDependencies ++= Seq(
+      "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
 
-    //   "co.fs2"                      %%% "fs2-core"                   % fs2V,
-    //   "co.fs2"                      %%% "fs2-io"                     % fs2V,
-
-    //   "org.typelevel" %%% "vault" % "3.5.0",
-    //   "org.typelevel" %%% "cats-mtl" % "1.3.1",
-    //   "org.typelevel" %%% "otel4s-core" % "0.2.1",
-
-    //   "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
-
-    // ),
+    ),
     Compile / PB.targets ++= Seq(
       scalapb.gen(grpc = false) -> (Compile / sourceManaged).value / "scalapb"
     )
+  ).jsSettings(
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
   )
-  // ).jsSettings(
-  //   scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
-  // )
 
 
 lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("examples"))
-  .dependsOn(core)
+  .dependsOn(core, otel)
   .settings(
     name := "otel4s-local-examples",
+    libraryDependencies ++= Seq(
+      "io.chrisdavenport" %%% "crossplatformioapp" % "0.1.0",
+    )
   ).jsSettings(
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
+    // mainClass := Some("io.chrisdavenport.otel4slocal.Main"),
+    scalaJSUseMainModuleInitializer := true,
   ).nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
   .platformsSettings(NativePlatform)(
     libraryDependencies ++= Seq(

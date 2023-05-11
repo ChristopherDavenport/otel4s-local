@@ -495,6 +495,4 @@ class LocalTracer[F[_]: Temporal: Random](
   def noopScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Noop))
   def rootScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Root))
 
-
-
 }

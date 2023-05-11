@@ -67,16 +67,16 @@ object OTLPExporter {
   def processChunk[F[_]: Concurrent](traceService: TraceService[F], chunk: Chunk[LocalSpan], headers: Headers): F[Unit] = {
     val base = chunk.toVector.groupBy(ls => ls.tracerState)
       .toList
-      .map{ case (tracerState, localSpans) => 
+      .map{ case (tracerState, localSpans) =>
         ResourceSpans(
           Some(
               io.opentelemetry.proto.resource.v1.resource.Resource(Seq(
-                KeyValue("service.name", Some(AnyValue(AnyValue.Value.StringValue(tracerState.name))))
-              ))
+                KeyValue("service.name", Some(AnyValue(AnyValue.Value.StringValue(tracerState.serviceName)))),
+              ).appendedAll(tracerState.resourceAttributes.map(attributeTransform(_))))
             ),
           Seq(
             ScopeSpans(
-              Some(InstrumentationScope(tracerState.name)),
+              Some(InstrumentationScope(tracerState.instrumentationScopeName)),
               spans = localSpans.map(spanTransform)
             )
           )

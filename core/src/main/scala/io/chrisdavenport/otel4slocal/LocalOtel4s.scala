@@ -19,10 +19,12 @@ import org.typelevel.otel4s.trace.SamplingDecision
 import io.chrisdavenport.otel4slocal.trace.LocalScoped.Root
 import io.chrisdavenport.otel4slocal.trace.LocalScoped.Noop
 import io.chrisdavenport.otel4slocal.trace.LocalScoped.Spanned
+import org.typelevel.otel4s.Attribute
 
 class LocalOtel4s[F[_]: Temporal: Random] private (
   local: Local[F, Vault], // How the fiber state interacts with this system
-
+  serviceName: String,
+  resourceAttributes: List[Attribute[_]],
   state: MapRef[F, SpanContext, Option[trace.LocalSpan]], // Where we store spans in motion
   processor: fs2.concurrent.Channel[F, trace.LocalSpan], // This is how we handle our completed spans
   propagator: ContextPropagators[F],
@@ -34,7 +36,7 @@ class LocalOtel4s[F[_]: Temporal: Random] private (
   def propagators: ContextPropagators[F] = propagator
 
   def tracerProvider: TracerProvider[F] = new TracerProvider[F] {
-    def tracer(name: String): TracerBuilder[F] = new trace.LocalTracerBuilder[F](name, None, None, true, local, propagators.textMapPropagator, state, processor)
+    def tracer(instrumentationScopeName: String): TracerBuilder[F] = new trace.LocalTracerBuilder[F](serviceName, resourceAttributes, instrumentationScopeName, None, None, true, local, propagators.textMapPropagator, state, processor)
   }
 }
 
@@ -43,6 +45,8 @@ object LocalOtel4s {
     local: Local[F, Vault],
     propagator: ContextPropagators[F],
     exporter: fs2.Pipe[F, trace.LocalSpan, Nothing],
+    serviceName: String,
+    resourceAttributes: List[Attribute[_]],
     timeoutSpanClose: FiniteDuration = 5.seconds,
     timeoutChannelProcessClose: FiniteDuration = 5.seconds,
   ): Resource[F, Otel4s[F]] = {
@@ -61,6 +65,8 @@ object LocalOtel4s {
       } // First make sure all the current running spans complete. This is the amount of time for in progress work to complete before a hard shutdown
     } yield new LocalOtel4s[F](
       local,
+      serviceName,
+      resourceAttributes,
       map,
       channel,
       propagator

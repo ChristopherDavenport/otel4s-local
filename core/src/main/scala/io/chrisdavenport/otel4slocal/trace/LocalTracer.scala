@@ -17,7 +17,11 @@ import io.chrisdavenport.otel4slocal.LocalOtel4s
 import org.typelevel.otel4s.trace.Span.Res
 
 class LocalTracer[F[_]: Temporal: Random](
-  tracerName: String,
+
+  serviceName: String,
+  resourceAttributes: List[Attribute[_]],
+
+  instrumentationScopeName: String,
   tracerVersion: Option[String],
   tracerSchemaUrl: Option[String],
   enabled: Boolean,
@@ -155,7 +159,7 @@ class LocalTracer[F[_]: Temporal: Random](
               statusDescription = None,
 
               ),
-              LocalSpan.TracerState(tracerName, tracerVersion, tracerSchemaUrl)
+              LocalSpan.TracerState(serviceName, resourceAttributes, instrumentationScopeName, tracerVersion, tracerSchemaUrl)
             )
           }
           spanContextOpt <- scopeParent match {
@@ -304,7 +308,7 @@ class LocalTracer[F[_]: Temporal: Random](
               statusDescription = None,
 
               ),
-              LocalSpan.TracerState(tracerName, tracerVersion, tracerSchemaUrl)
+              LocalSpan.TracerState(serviceName, resourceAttributes, instrumentationScopeName, tracerVersion, tracerSchemaUrl)
             )
           }
           spanContextOpt <- scopeParent match {

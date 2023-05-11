@@ -102,7 +102,10 @@ object LocalSpan {
   )
 
   case class TracerState(
-    name: String,
+    serviceName: String,
+    resourceAttributes: List[Attribute[_]],
+
+    instrumentationScopeName: String,
     version: Option[String],
     schemaUrl: Option[String],
   )

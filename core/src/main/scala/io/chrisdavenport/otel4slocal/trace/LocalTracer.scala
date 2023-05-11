@@ -396,8 +396,8 @@ class LocalTracer[F[_]: Temporal: Random](
    *  For convenience, these are usable as stub implementations.
    */
     def addAttribute[A](attribute: Attribute[A]) = this
-    def addAttributes(attributes: Seq[Attribute[?]])= this
-    def addLink(spanContext: SpanContext, attributes:Seq[Attribute[?]])= this
+    def addAttributes(attributes: Attribute[_]*)= this
+    def addLink(spanContext: SpanContext, attributes: Attribute[_]*)= this
 
     def root = this
     def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) = this
@@ -424,8 +424,8 @@ class LocalTracer[F[_]: Temporal: Random](
  *  For convenience, these are usable as stub implementations.
  */
   def addAttribute[A](attribute: Attribute[A]) = this
-  def addAttributes(attributes: Seq[Attribute[?]])= this
-  def addLink(spanContext: SpanContext, attributes:Seq[Attribute[?]])= this
+  def addAttributes(attributes: Attribute[_]*)= this
+  def addLink(spanContext: SpanContext, attributes: Attribute[_]*)= this
 
   def root = this
   def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) = this

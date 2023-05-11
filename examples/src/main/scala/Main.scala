@@ -16,9 +16,10 @@ object Main extends CrossPlatformIOApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     cats.effect.std.Random.scalaUtilRandom[IO].flatMap{ implicit R: cats.effect.std.Random[IO] =>
-      LocalOtel4s.localVault[IO].flatMap{local =>
-        io.chrisdavenport.otel4slocal.otlp.OTLPExporter.build[IO](uri"http://localhost:4317").use( exporter =>
-        LocalOtel4s.build(local, LocalContextPropagators.traceparent, exporter).use(otel4s =>
+      LocalOtel4s.localVault[IO].flatMap{ implicit L: Local[IO, Vault] =>
+        io.chrisdavenport.otel4slocal.api.OpenTelemetry.build[IO].use( otel4s =>
+        // io.chrisdavenport.otel4slocal.otlp.OTLPExporter.build[IO](uri"http://localhost:4317").use( exporter =>
+        // LocalOtel4s.build(local, LocalContextPropagators.traceparent, exporter).use(otel4s =>
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
             tracer.spanBuilder("Test").build.use{ span =>
               span.addAttribute(Attribute("test.attribute", "huzzah")) >>
@@ -33,7 +34,7 @@ object Main extends CrossPlatformIOApp {
               )
             }
           }
-        ))
+        )
       }
     }
   }.as(ExitCode.Success)

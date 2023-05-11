@@ -86,12 +86,35 @@ lazy val otlp = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
   )
 
+lazy val api = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+  .crossType(CrossType.Pure)
+  .enablePlugins(NoPublishPlugin)
+  .in(file("api"))
+  .dependsOn(core, otlp)
+  .settings(
+    name := "otel4s-local-api",
+    libraryDependencies += compilerPlugin("org.polyvariant" % "better-tostring" % "0.3.17" cross CrossVersion.full),
+
+    libraryDependencies ++= Seq(
+      "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
+
+    )
+  ).jsSettings(
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
+  ).nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
+  .platformsSettings(NativePlatform)(
+    libraryDependencies ++= Seq(
+      "com.armanbilge" %%% "epollcat" % "0.1.4" % Test
+    ),
+    Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
+    Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
+  )
 
 lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("examples"))
-  .dependsOn(core, otlp)
+  .dependsOn(api)
   .settings(
     name := "otel4s-local-examples",
     libraryDependencies ++= Seq(

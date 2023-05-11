@@ -3,6 +3,7 @@ package io.chrisdavenport.otel4slocal.otlp
 import cats._
 import cats.syntax.all._
 import cats.effect._
+import cats.effect.syntax.all._
 import cats.effect.std.Random
 import cats.mtl.Local
 import org.typelevel.vault.Vault
@@ -37,25 +38,29 @@ import com.google.protobuf.ByteString
 import org.typelevel.otel4s.ContextPropagators
 import org.http4s.Headers
 import org.http4s.client.Client
+import io.opentelemetry.proto.common.v1.common.InstrumentationScope
 
 object OTLPExporter {
 
   def build[F[_]: Async](
     baseUri: Uri,
+    headers: Headers = Headers.empty, 
+    timeout: Duration = 10.seconds,
+    concurrency: Int = 1,
   ): Resource[F, fs2.Pipe[F, LocalSpan, Nothing]] = {
     EmberClientBuilder.default[F].withHttp2.build
-      .map(fromClient(_, baseUri, Applicative[F].pure(Headers.empty)))
+      .map(fromClient(_, baseUri, headers, timeout, concurrency))
   }
 
-  def fromClient[F[_]: Concurrent](client: Client[F], baseUri: Uri, getHeaders: F[Headers]): fs2.Pipe[F, LocalSpan, Nothing] = {
+  def fromClient[F[_]: Temporal](client: Client[F], baseUri: Uri, headers: Headers, timeout: Duration, concurrency: Int): fs2.Pipe[F, LocalSpan, Nothing] = {
     val traceService = TraceService.fromClient(client, baseUri)
 
     {(s: Stream[F, LocalSpan]) => 
-      s.chunks.evalMap{ chunk =>
-        getHeaders.flatMap{ headers =>
-          processChunk(traceService, chunk, headers)
-        }
-      }.drain
+      def process: Stream[F, Nothing] = s.chunks.parEvalMap(concurrency){ chunk =>
+        processChunk(traceService, chunk, headers)
+          .timeout(timeout)
+      }.drain.handleErrorWith(_ => process)
+      process
     }
   }
 
@@ -71,7 +76,7 @@ object OTLPExporter {
             ),
           Seq(
             ScopeSpans(
-              None,
+              Some(InstrumentationScope(tracerState.name)),
               spans = localSpans.map(spanTransform)
             )
           )

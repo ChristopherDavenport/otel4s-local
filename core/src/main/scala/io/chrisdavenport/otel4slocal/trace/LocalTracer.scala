@@ -184,7 +184,8 @@ class LocalTracer[F[_]: Temporal: Random](
               statusDescription = None,
 
               ),
-              LocalSpan.TracerState(serviceName, resourceAttributes, instrumentationScopeName, tracerVersion, tracerSchemaUrl)
+              LocalSpan.ResourceState(serviceName, resourceAttributes),
+              LocalSpan.ScopeState(instrumentationScopeName, tracerVersion, tracerSchemaUrl)
             )
           }
           spanContextOpt <- scopeParent match {
@@ -333,7 +334,8 @@ class LocalTracer[F[_]: Temporal: Random](
               statusDescription = None,
 
               ),
-              LocalSpan.TracerState(serviceName, resourceAttributes, instrumentationScopeName, tracerVersion, tracerSchemaUrl)
+              LocalSpan.ResourceState(serviceName, resourceAttributes),
+              LocalSpan.ScopeState(instrumentationScopeName, tracerVersion, tracerSchemaUrl)
             )
           }
           spanContextOpt <- scopeParent match {

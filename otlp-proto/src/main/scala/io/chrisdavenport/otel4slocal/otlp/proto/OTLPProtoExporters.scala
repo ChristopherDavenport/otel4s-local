@@ -1,4 +1,4 @@
-package io.chrisdavenport.otel4slocal.otlp
+package io.chrisdavenport.otel4slocal.otlp.proto
 
 import cats._
 import cats.syntax.all._
@@ -36,56 +36,95 @@ import io.opentelemetry.proto.common.v1.common.KeyValue
 import io.opentelemetry.proto.common.v1.common.AnyValue
 import com.google.protobuf.ByteString
 import org.typelevel.otel4s.ContextPropagators
-import org.http4s.Headers
+import org.http4s._
 import org.http4s.client.Client
 import io.opentelemetry.proto.common.v1.common.InstrumentationScope
+import org.typelevel.ci.CIString
 
-object OTLPExporter {
+object OTLPProtoExporters {
 
-  def build[F[_]: Async](
+  def buildGrpc[F[_]: Async](
     baseUri: Uri,
-    headers: Headers = Headers.empty, 
-    timeout: Duration = 10.seconds,
-    concurrency: Int = 1,
+    headers: Headers,
+    timeout: Duration,
+    concurrency: Int,
   ): Resource[F, fs2.Pipe[F, LocalSpan, Nothing]] = {
     EmberClientBuilder.default[F].withHttp2.build
-      .map(fromClient(_, baseUri, headers, timeout, concurrency))
+      .map(grpc(_, baseUri, headers, timeout, concurrency))
   }
 
-  def fromClient[F[_]: Temporal](client: Client[F], baseUri: Uri, headers: Headers, timeout: Duration, concurrency: Int): fs2.Pipe[F, LocalSpan, Nothing] = {
+  def grpc[F[_]: Temporal](client: Client[F], baseUri: Uri, headers: Headers, timeout: Duration, concurrency: Int): fs2.Pipe[F, LocalSpan, Nothing] = {
     val traceService = TraceService.fromClient(client, baseUri)
 
-    {(s: Stream[F, LocalSpan]) => 
+    {(s: Stream[F, LocalSpan]) =>
       def process: Stream[F, Nothing] = s.chunks.parEvalMap(concurrency){ chunk =>
-        processChunk(traceService, chunk, headers)
+        processChunk(chunk)
+          .traverse(traceService.`export`(_, headers))
           .timeout(timeout)
       }.drain.handleErrorWith(_ => process)
       process
     }
   }
 
-  def processChunk[F[_]: Concurrent](traceService: TraceService[F], chunk: Chunk[LocalSpan], headers: Headers): F[Unit] = {
-    val base = chunk.toVector.groupBy(ls => ls.tracerState)
+  def buildHttpProto[F[_]: Async](
+    baseUri: Uri,
+    headers: Headers,
+    timeout: Duration,
+    concurrency: Int,
+  ): Resource[F, fs2.Pipe[F, LocalSpan, Nothing]] = {
+    EmberClientBuilder.default[F].withHttp2.build
+      .map(httpProto(_, baseUri, headers, timeout, concurrency))
+  }
+
+  def httpProto[F[_]: Async](client: Client[F], baseUri: Uri, headers: Headers, timeout: Duration, concurrency: Int): fs2.Pipe[F, LocalSpan, Nothing] = {
+    val proto = Header.Raw(CIString("Content-Type"),"application/x-protobuf")
+
+    {(s: Stream[F, LocalSpan]) =>
+      def process: Stream[F, Nothing] = s.chunks.parEvalMap(concurrency){ chunk =>
+        processChunk(chunk)
+          .traverse{ exportReq =>
+            client.run(
+              Request[F](Method.POST, baseUri, HttpVersion.`HTTP/1.1`)
+                .withEntity(exportReq.toByteArray)
+                .removeHeader(CIString("Content-Type"))
+                .putHeaders(proto)
+            ).use{ resp =>
+              resp.status.isSuccess.pure[F]
+            }
+          }
+          .timeout(timeout)
+      }.drain.handleErrorWith(_ => process)
+      process
+    }
+  }
+
+  def processChunk(chunk: Chunk[LocalSpan]): Option[ExportTraceServiceRequest] = {
+    val vector = chunk.toVector
+    vector.headOption.map{ls =>
+      val base : Seq[ScopeSpans] = vector.groupBy(ls => ls.scopeState)
       .toList
       .map{ case (tracerState, localSpans) =>
-        ResourceSpans(
-          Some(
-              io.opentelemetry.proto.resource.v1.resource.Resource(Seq(
-                KeyValue("service.name", Some(AnyValue(AnyValue.Value.StringValue(tracerState.serviceName)))),
-              ).appendedAll(tracerState.resourceAttributes.map(attributeTransform(_))))
-            ),
-          Seq(
-            ScopeSpans(
-              Some(InstrumentationScope(tracerState.instrumentationScopeName)),
-              spans = localSpans.map(spanTransform)
-            )
-          )
+        ScopeSpans(
+          Some(InstrumentationScope(tracerState.instrumentationScopeName)),
+          spans = localSpans.map(spanTransform)
         )
-        
       }
-    val request = ExportTraceServiceRequest(base)
+      val rs = Seq(
+        ResourceSpans(
+            Some(
+              io.opentelemetry.proto.resource.v1.resource.Resource(Seq(
+                KeyValue("service.name", Some(AnyValue(AnyValue.Value.StringValue(ls.resourceState.serviceName)))),
+              ).appendedAll(ls.resourceState.resourceAttributes.map(attributeTransform(_))))
+            ),
+            base
+        )
+      )
+      ExportTraceServiceRequest(rs)
+    }
 
-    traceService.`export`(request, headers).void
+    // val request = ExportTraceServiceRequest(base)
+
+    // traceService.`export`(request, headers).void
   }
 
   def attributeTransform(attribute: Attribute[_]): KeyValue = {
@@ -93,7 +132,7 @@ object OTLPExporter {
     val value: AnyValue =  attribute.key.`type` match {
       case AttributeType.Boolean => 
         AnyValue(AnyValue.Value.BoolValue(attribute.value.asInstanceOf[Boolean]))
-      case AttributeType.Double => 
+      case AttributeType.Double =>
         AnyValue(AnyValue.Value.DoubleValue(attribute.value.asInstanceOf[Double]))
       case AttributeType.String => 
         AnyValue(AnyValue.Value.StringValue(attribute.value.asInstanceOf[String]))
@@ -162,6 +201,7 @@ object OTLPExporter {
     attributes = ls.attributes.map(attributeTransform),
     droppedAttributesCount = ls.droppedAttributes,
   )
+
   
 
   def spanTransform(ls: LocalSpan): Span = Span(

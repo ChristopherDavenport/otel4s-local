@@ -53,7 +53,8 @@ case class LocalSpan(
   parentSpan: Option[SpanContext], // Zero Element if Root when reporting to externals - otel wants this
   kind: SpanKind, // Need typed model for kind, this is editable?
   mutable: LocalSpan.MutableState,
-  tracerState: LocalSpan.TracerState
+  resourceState: LocalSpan.ResourceState,
+  scopeState: LocalSpan.ScopeState
 )
 
 object LocalSpan {
@@ -101,13 +102,15 @@ object LocalSpan {
     statusDescription: Option[String],
   )
 
-  case class TracerState(
-    serviceName: String,
-    resourceAttributes: List[Attribute[_]],
-
+  case class ScopeState(
     instrumentationScopeName: String,
     version: Option[String],
     schemaUrl: Option[String],
+  )
+
+  case class ResourceState(
+    serviceName: String,
+    resourceAttributes: List[Attribute[_]],
   )
 
 

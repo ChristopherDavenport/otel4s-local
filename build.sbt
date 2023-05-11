@@ -27,10 +27,9 @@ val circeV = "0.14.5"
 val doobieV = "1.0.0-RC2"
 val munitCatsEffectV = "2.0.0-M3"
 
-
 // Projects
 lazy val `otel4s-local` = tlCrossRootProject
-  .aggregate(core, otlp, api, examples)
+  .aggregate(core, otlpProto, otlpJson, api, examples)
 
 lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
@@ -64,14 +63,14 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
 
-lazy val otlp = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+lazy val otlpProto = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
-  .in(file("otlp"))
+  .in(file("otlp-proto"))
   .enablePlugins(Http4sGrpcPlugin)
   .enablePlugins(NoPublishPlugin)
   .dependsOn(core)
   .settings(
-    name := "otel4s-local-otel",
+    name := "otel4s-local-otlp-proto",
     Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
 
     libraryDependencies ++= Seq(
@@ -86,11 +85,37 @@ lazy val otlp = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
   )
 
+lazy val otlpJson = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+  .crossType(CrossType.Pure)
+  .enablePlugins(NoPublishPlugin)
+  .in(file("otlp-json"))
+  .dependsOn(core, otlpProto)
+  .settings(
+    name := "otel4s-local-otlp-json",
+    libraryDependencies += compilerPlugin("org.polyvariant" % "better-tostring" % "0.3.17" cross CrossVersion.full),
+
+    libraryDependencies ++= Seq(
+      "org.http4s"                  %%% "http4s-ember-client"      % "0.23.18",
+      "org.http4s"                  %%% "http4s-circe"             % "0.23.18",
+      "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
+
+    )
+  ).jsSettings(
+    scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
+  ).nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
+  .platformsSettings(NativePlatform)(
+    libraryDependencies ++= Seq(
+      "com.armanbilge" %%% "epollcat" % "0.1.4" % Test
+    ),
+    Test / nativeBrewFormulas ++= Set("s2n", "utf8proc"),
+    Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
+  )
+
 lazy val api = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("api"))
-  .dependsOn(core, otlp)
+  .dependsOn(core, otlpProto, otlpJson)
   .settings(
     name := "otel4s-local-api",
     libraryDependencies += compilerPlugin("org.polyvariant" % "better-tostring" % "0.3.17" cross CrossVersion.full),
@@ -119,10 +144,19 @@ lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     name := "otel4s-local-examples",
     libraryDependencies ++= Seq(
       "io.chrisdavenport" %%% "crossplatformioapp" % "0.1.0",
+    ),
+    run / fork := true,
+    envVars := Map(
+      "OTEL_SERVICE_NAME" -> "otel4s-local-example-http-proto",
+      "OTEL_EXPORTER_OTLP_PROTOCOL" -> "http/protobuf"
     )
   ).jsSettings(
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},
     scalaJSUseMainModuleInitializer := true,
+  ).jvmSettings(
+    libraryDependencies ++= Seq(
+      "org.slf4j"     % "slf4j-simple"        % "1.7.30",
+    )
   )
   // .nativeEnablePlugins(ScalaNativeBrewedConfigPlugin)
   // .platformsSettings(NativePlatform)(

@@ -75,6 +75,7 @@ lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Compile / PB.protoSources += baseDirectory.value.getParentFile / "src" / "main" / "protobuf",
 
     libraryDependencies ++= Seq(
+      "io.opentelemetry.proto" % "opentelemetry-proto" % "0.19.0-alpha" % "protobuf-src" intransitive (),
       "org.typelevel"               %%% "munit-cats-effect"        % munitCatsEffectV         % Test,
 
     ),

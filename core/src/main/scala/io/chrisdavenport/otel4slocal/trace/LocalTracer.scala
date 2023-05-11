@@ -32,30 +32,55 @@ class LocalTracer[F[_]: Temporal: Random](
   processor: fs2.concurrent.Channel[F, LocalSpan] // This is how we handle our completed spans
 ) extends Tracer[F]{ tracer =>
 
-  def currentSpanContext: F[Option[SpanContext]] = local.ask.map(LocalScoped.extractFromVault).map{
-    case LocalScoped.Spanned(context) => context.some
-    case _ => None
-  }
+  private def backendImpl[F[_]: Temporal](
+    spanContext: SpanContext,
+    ref: Ref[F, Option[LocalSpan]],
+    processor: fs2.concurrent.Channel[F, LocalSpan],
+    instrumentMeta: InstrumentMeta[F]
+  ) = {
+    val endF = {(fd: FiniteDuration) => ref.modify{
+        case Some(ls) =>
+          None -> ls.copy(mutable = ls.mutable.copy(endTime = fd.some)).some
+        case None =>
+          None -> None
+      }.flatMap{
+        case Some(ls) =>
+          processor.send(ls).void
+        case None => Applicative[F].unit
+      }
+    }
 
-  def joinOrRoot[A, C: TextMapGetter](carrier: C)(fa: F[A]): F[A] = {
-    local.local(fa)(vault =>
-      textMapPropagator.extract(vault, carrier)
-    )
-  }
-  def meta: Tracer.Meta[F] = new Tracer.Meta[F]{
-    // Members declared in org.typelevel.otel4s.meta.InstrumentMeta
-    def isEnabled: Boolean = enabled
-    def unit: F[Unit] = Applicative[F].unit
-    
-    // Members declared in org.typelevel.otel4s.trace.Tracer$.Meta
-    def noopResSpan[A](resource: Resource[F, A]):SpanBuilder.Aux[F,Span.Res[F, A]] =
-      Tracer.noop.meta.noopResSpan(resource)
-    def noopSpanBuilder:SpanBuilder.Aux[F,Span[F]] = SpanBuilder.noop(Span.Backend.noop)
-  }
+    new org.typelevel.otel4s.backdoor.BackdoorBackend[F](
+      Temporal[F].realTime.flatMap(endF),
+      endF,
+    ) {
+      def addAttributes(attributes: Attribute[_]*): F[Unit] = ref.update{
+        case None => None
+        case Some(value) => value.copy(mutable = value.mutable.copy(attributes = value.mutable.attributes.appendedAll(attributes))).some
+      }
+      def addEvent(name: String, attributes: org.typelevel.otel4s.Attribute[_]*): F[Unit] = //???
+      // def addEvent(name: String, attributes: Seq[Attribute[_]]): F[Unit] =
+        Clock[F].realTime.flatMap(addEvent(name, _, attributes:_*))
+      def addEvent(name: String, timestamp: FiniteDuration, attributes: Attribute[_]*): F[Unit] = ref.update{
+        case None => None
+        case Some(value) => value.copy(mutable = value.mutable.copy(events = value.mutable.events.appended(LocalEvent(timestamp, name, attributes.toList, 0)))).some
+      }
+      def context: SpanContext = spanContext
+      def meta: InstrumentMeta[F] = instrumentMeta
 
-  def childScope[A](parent: SpanContext)(fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Spanned(parent)))
-  def noopScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Noop))
-  def rootScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Root))
+      def recordException(exception: Throwable, attributes: Attribute[_]*):F[Unit] =
+        addAttributes(attributes.appended(Attribute("error.throwable", exception.toString())):_*) // TODO whatever this does for java.
+
+      def setStatus(status: Status): F[Unit] = ref.update {
+        case None => None
+        case Some(value) => value.copy(mutable = value.mutable.copy(status = status)).some
+      }
+      def setStatus(status: Status, description: String): F[Unit] = ref.update {
+        case None => None
+        case Some(value) => value.copy(mutable = value.mutable.copy(status = status, statusDescription = description.some)).some
+      }
+    }
+  }
 
   sealed trait Parent
   object Parent {
@@ -63,7 +88,7 @@ class LocalTracer[F[_]: Temporal: Random](
     case class Explicit(spanContext: SpanContext) extends Parent
   }
 
-  class InternalSpanBuilder(
+  class DirectSpanBuilder(
     name: String,
     attributes: Seq[Attribute[_]],
     links: Seq[(SpanContext, Seq[Attribute[_]])],
@@ -82,7 +107,7 @@ class LocalTracer[F[_]: Temporal: Random](
       parent: Option[Parent] = self.parent,
       kind: SpanKind = self.kind,
       startTimeStamp: Option[FiniteDuration] = self.startTimeStamp,
-    ) = new InternalSpanBuilder(
+    ) = new DirectSpanBuilder(
       name,
       attributes,
       links,
@@ -198,7 +223,7 @@ class LocalTracer[F[_]: Temporal: Random](
       }
     }
 
-    def wrapResource[A](resource: Resource[F, A])(implicit ev: InternalSpanBuilder.this.Result =:=Span[F]): SpanBuilder.Aux[F,Span.Res[F, A]] = {
+    def wrapResource[A](resource: Resource[F, A])(implicit ev: DirectSpanBuilder.this.Result =:=Span[F]): SpanBuilder.Aux[F,Span.Res[F, A]] = {
       new SpannedResourceBuilder[A](resource, name, attributes, links, strategy, parent, kind, startTimeStamp)
     }
   }
@@ -365,8 +390,75 @@ class LocalTracer[F[_]: Temporal: Random](
     }
   }
 
+  class NoOpDirectSpanBuilder() extends SpanBuilder[F] {
+    type Result = Span[F]
+  /** As seen from class NoOpDirectSpanBuild, the missing signatures are as follows.
+   *  For convenience, these are usable as stub implementations.
+   */
+    def addAttribute[A](attribute: Attribute[A]) = this
+    def addAttributes(attributes: Seq[Attribute[?]])= this
+    def addLink(spanContext: SpanContext, attributes:Seq[Attribute[?]])= this
+
+    def root = this
+    def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) = this
+    def withParent(parent: SpanContext) = this
+    def withSpanKind(spanKind: SpanKind)= this
+    def withStartTimestamp(timestamp: FiniteDuration)= this
+    def build: SpanOps.Aux[F, Span[F]] = new SpanOps[F]{
+      type Result = Span[F]
+      def startUnmanaged(implicit ev: Span[F] =:= Span[F]):F[Span[F]] =
+        SpanBuilder.noop[F](Span.Backend.noop[F]).build.startUnmanaged
+
+      def use[A](f: Span[F] => F[A]): F[A] =
+        noopScope(startUnmanaged.flatMap(f))
+      def surround[A](fa: F[A]): F[A] = use(_ => fa)
+      def use_ : F[Unit] = use(_ => Applicative[F].unit)
+    }
+    def wrapResource[A](resource: Resource[F, A])(implicit ev: Span[F] =:= Span[F]):
+        SpanBuilder.Aux[F,Span.Res[F, A]] = ???
+  }
+
+  class NoOpResourceSpanBuilder[A](resource: Resource[F, A]) extends SpanBuilder[F] {
+    type Result = Span.Res[F, A]
+/** As seen from class NoOpDirectSpanBuild, the missing signatures are as follows.
+ *  For convenience, these are usable as stub implementations.
+ */
+  def addAttribute[A](attribute: Attribute[A]) = this
+  def addAttributes(attributes: Seq[Attribute[?]])= this
+  def addLink(spanContext: SpanContext, attributes:Seq[Attribute[?]])= this
+
+  def root = this
+  def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) = this
+  def withParent(parent: SpanContext) = this
+  def withSpanKind(spanKind: SpanKind)= this
+  def withStartTimestamp(timestamp: FiniteDuration)= this
+  def build: SpanOps.Aux[F, Span.Res[F, A]] = new SpanOps[F]{
+    type Result = Span.Res[F, A]
+
+    // Impossible
+    def startUnmanaged(implicit ev: NoOpResourceSpanBuilder.this.Result =:= Span[F]):F[Span[F]] =
+      ???
+
+    def use[B](f: Span.Res[F, A] => F[B]): F[B] =
+      noopScope(resource.use{a =>
+        val res = new Span.Res[F, A] {
+          def backend = Span.Backend.noop[F]
+          def value: A = a
+        }
+        f(res)
+      })
+    def surround[A](fa: F[A]): F[A] = use(_ => fa)
+    def use_ : F[Unit] = use(_ => Applicative[F].unit)
+  }
+  // Impossible
+  def wrapResource[A](resource: Resource[F, A])(implicit ev: NoOpResourceSpanBuilder.this.Result =:=Span[F]):
+      SpanBuilder.Aux[F,Span.Res[F, A]] = ???
+  }
+
+  // Direct Methods
+
   def spanBuilder(name: String): SpanBuilder.Aux[F,Span[F]] = {
-    new InternalSpanBuilder(
+    new DirectSpanBuilder(
       name,
       Seq.empty,
       Seq.empty,
@@ -377,53 +469,32 @@ class LocalTracer[F[_]: Temporal: Random](
     )
   }
 
-  private def backendImpl[F[_]: Temporal](
-    spanContext: SpanContext,
-    ref: Ref[F, Option[LocalSpan]],
-    processor: fs2.concurrent.Channel[F, LocalSpan],
-    instrumentMeta: InstrumentMeta[F]
-  ) = {
-    val endF = {(fd: FiniteDuration) => ref.modify{
-          case Some(ls) =>
-            None -> ls.copy(mutable = ls.mutable.copy(endTime = fd.some)).some
-          case None =>
-            None -> None
-        }.flatMap{
-          case Some(ls) =>
-            processor.send(ls).void
-          case None => Applicative[F].unit
-        }
-      }
+  def currentSpanContext: F[Option[SpanContext]] = local.ask.map(LocalScoped.extractFromVault).map{
+    case LocalScoped.Spanned(context) => context.some
+    case _ => None
+  }
 
-    new org.typelevel.otel4s.backdoor.BackdoorBackend[F](
-        Temporal[F].realTime.flatMap(endF),
-        endF,
-      ) {
-        def addAttributes(attributes: Attribute[_]*): F[Unit] = ref.update{
-          case None => None
-          case Some(value) => value.copy(mutable = value.mutable.copy(attributes = value.mutable.attributes.appendedAll(attributes))).some
-        }
-        def addEvent(name: String, attributes: org.typelevel.otel4s.Attribute[_]*): F[Unit] = //???
-        // def addEvent(name: String, attributes: Seq[Attribute[_]]): F[Unit] =
-          Clock[F].realTime.flatMap(addEvent(name, _, attributes:_*))
-        def addEvent(name: String, timestamp: FiniteDuration, attributes: Attribute[_]*): F[Unit] = ref.update{
-          case None => None
-          case Some(value) => value.copy(mutable = value.mutable.copy(events = value.mutable.events.appended(LocalEvent(timestamp, name, attributes.toList, 0)))).some
-        }
-        def context: SpanContext = spanContext
-        def meta: InstrumentMeta[F] = instrumentMeta
+  def joinOrRoot[A, C: TextMapGetter](carrier: C)(fa: F[A]): F[A] = {
+    local.local(fa)(vault =>
+      textMapPropagator.extract(vault, carrier)
+    )
+  }
+  def meta: Tracer.Meta[F] = new Tracer.Meta[F]{
+    // Members declared in org.typelevel.otel4s.meta.InstrumentMeta
+    def isEnabled: Boolean = enabled
+    def unit: F[Unit] = Applicative[F].unit
+    
+    // Members declared in org.typelevel.otel4s.trace.Tracer$.Meta
+    def noopResSpan[A](resource: Resource[F, A]):SpanBuilder.Aux[F,Span.Res[F, A]] =
+      new NoOpResourceSpanBuilder(resource)
+    def noopSpanBuilder:SpanBuilder.Aux[F,Span[F]] =
+      new NoOpDirectSpanBuilder()
+  }
 
-        def recordException(exception: Throwable, attributes: Attribute[_]*):F[Unit] =
-          addAttributes(attributes.appended(Attribute("error.throwable", exception.toString())):_*) // TODO whatever this does for java.
+  def childScope[A](parent: SpanContext)(fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Spanned(parent)))
+  def noopScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Noop))
+  def rootScope[A](fa: F[A]): F[A] = local.local(fa)(LocalScoped.insertIntoVault(_, LocalScoped.Root))
 
-        def setStatus(status: Status): F[Unit] = ref.update {
-          case None => None
-          case Some(value) => value.copy(mutable = value.mutable.copy(status = status)).some
-        }
-        def setStatus(status: Status, description: String): F[Unit] = ref.update {
-          case None => None
-          case Some(value) => value.copy(mutable = value.mutable.copy(status = status, statusDescription = description.some)).some
-        }
-      }
-    }
+
+
 }

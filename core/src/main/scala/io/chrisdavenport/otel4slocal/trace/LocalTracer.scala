@@ -420,39 +420,39 @@ class LocalTracer[F[_]: Temporal: Random](
 
   class NoOpResourceSpanBuilder[A](resource: Resource[F, A]) extends SpanBuilder[F] {
     type Result = Span.Res[F, A]
-/** As seen from class NoOpDirectSpanBuild, the missing signatures are as follows.
- *  For convenience, these are usable as stub implementations.
- */
-  def addAttribute[A](attribute: Attribute[A]) = this
-  def addAttributes(attributes: Attribute[_]*)= this
-  def addLink(spanContext: SpanContext, attributes: Attribute[_]*)= this
+  /** As seen from class NoOpDirectSpanBuild, the missing signatures are as follows.
+   *  For convenience, these are usable as stub implementations.
+   */
+    def addAttribute[A](attribute: Attribute[A]) = this
+    def addAttributes(attributes: Attribute[_]*)= this
+    def addLink(spanContext: SpanContext, attributes: Attribute[_]*)= this
 
-  def root = this
-  def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) = this
-  def withParent(parent: SpanContext) = this
-  def withSpanKind(spanKind: SpanKind)= this
-  def withStartTimestamp(timestamp: FiniteDuration)= this
-  def build: SpanOps.Aux[F, Span.Res[F, A]] = new SpanOps[F]{
-    type Result = Span.Res[F, A]
+    def root = this
+    def withFinalizationStrategy(strategy: SpanFinalizer.Strategy) = this
+    def withParent(parent: SpanContext) = this
+    def withSpanKind(spanKind: SpanKind)= this
+    def withStartTimestamp(timestamp: FiniteDuration)= this
+    def build: SpanOps.Aux[F, Span.Res[F, A]] = new SpanOps[F]{
+      type Result = Span.Res[F, A]
 
+      // Impossible
+      def startUnmanaged(implicit ev: NoOpResourceSpanBuilder.this.Result =:= Span[F]):F[Span[F]] =
+        ???
+
+      def use[B](f: Span.Res[F, A] => F[B]): F[B] =
+        noopScope(resource.use{a =>
+          val res = new Span.Res[F, A] {
+            def backend = Span.Backend.noop[F]
+            def value: A = a
+          }
+          f(res)
+        })
+      def surround[A](fa: F[A]): F[A] = use(_ => fa)
+      def use_ : F[Unit] = use(_ => Applicative[F].unit)
+    }
     // Impossible
-    def startUnmanaged(implicit ev: NoOpResourceSpanBuilder.this.Result =:= Span[F]):F[Span[F]] =
-      ???
-
-    def use[B](f: Span.Res[F, A] => F[B]): F[B] =
-      noopScope(resource.use{a =>
-        val res = new Span.Res[F, A] {
-          def backend = Span.Backend.noop[F]
-          def value: A = a
-        }
-        f(res)
-      })
-    def surround[A](fa: F[A]): F[A] = use(_ => fa)
-    def use_ : F[Unit] = use(_ => Applicative[F].unit)
-  }
-  // Impossible
-  def wrapResource[A](resource: Resource[F, A])(implicit ev: NoOpResourceSpanBuilder.this.Result =:=Span[F]):
-      SpanBuilder.Aux[F,Span.Res[F, A]] = ???
+    def wrapResource[A](resource: Resource[F, A])(implicit ev: NoOpResourceSpanBuilder.this.Result =:=Span[F]):
+        SpanBuilder.Aux[F,Span.Res[F, A]] = ???
   }
 
   // Direct Methods

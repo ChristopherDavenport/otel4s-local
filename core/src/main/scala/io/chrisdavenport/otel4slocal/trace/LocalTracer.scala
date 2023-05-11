@@ -182,7 +182,7 @@ class LocalTracer[F[_]: Temporal: Random](
       def use[A](f: Span[F] => F[A]): F[A] = {
         Resource.makeCase(startUnmanaged){
           case (span, resourceCase) => {
-            strategy.unapply(resourceCase) match {
+            strategy.lift(resourceCase) match {
               case Some(finalizer) => org.typelevel.otel4s.backdoor.StrategyRunBackend.run(span.backend, finalizer)
               case _ => Applicative[F].unit
             }

@@ -20,7 +20,7 @@ object LocalContextPropagators {
     spanIdS: String,
     sampled: Boolean,
   ): SpanContext = new SpanContext {
-    override def toString(): String = s"SpanContext(traceIdHex=${traceIdHex},spanIdHex=${spanIdHex}, isRemote=${isRemote}, sampling=${samplingDecision}, isValid=${isValid})"
+    override def toString(): String = s"SpanContext(traceIdHex=${traceIdHex}, spanIdHex=${spanIdHex}, isRemote=${isRemote}, sampling=${samplingDecision}, isValid=${isValid})"
     def isRemote: Boolean = true
     def isValid: Boolean = true
     def samplingDecision: org.typelevel.otel4s.trace.SamplingDecision = SamplingDecision.fromBoolean(sampled)
@@ -43,13 +43,13 @@ object LocalContextPropagators {
 
   }
 
-  def noopPropagator[F[_]: Applicative] = new ContextPropagators[F] {
+  def none[F[_]: Applicative] = new ContextPropagators[F] {
     def textMapPropagator: TextMapPropagator[F] = new TextMapPropagator[F] {
       def extract[A: TextMapGetter](ctx: Vault, carrier: A): Vault = ctx
       def inject[A: TextMapSetter](ctx: Vault, carrier: A): F[Unit] = Applicative[F].unit
     }
   }
-  def w3cPropagators[F[_]: Applicative] = new ContextPropagators[F] {
+  def traceparent[F[_]: Applicative] = new ContextPropagators[F] {
     val Extract = "([0-9]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})".r
 
     def textMapPropagator: TextMapPropagator[F] = new TextMapPropagator[F] {
@@ -88,7 +88,25 @@ object LocalContextPropagators {
     }
   }
 
-  def b3Propagation[F[_]: Applicative] = new ContextPropagators[F] {
+  private def fromB3Strings(traceIdS: String, spanIdS: String, sampleDecisionS: Option[String]): Option[SpanContext] = {
+    (
+      ByteVector.fromHex(traceIdS)
+      .flatTap(bv => Alternative[Option].guard(bv != invalidTraceId)),
+      ByteVector.fromHex(spanIdS)
+      .flatTap(bv => Alternative[Option].guard(bv != invalidSpanId)),
+      sampleDecisionS match {
+        case Some("d") => true.some
+        case Some("1") => true.some
+        case Some("0") => false.some
+        case Some(_) => Option.empty
+        case None => true.some
+      }
+    ).mapN{ case (traceIdBV, spanIdBV, sampled) =>
+      createSpanContext(traceIdBV, traceIdS, spanIdBV, spanIdS, sampled)
+    }
+  }
+
+  def b3[F[_]: Applicative] = new ContextPropagators[F] {
     val Extract = "([0-9a-f]{32})-([0-9a-f]{16})-([01d]{1}).*".r
     val Extract2 = "([0-9a-f]{32})-([0-9a-f]{16}).*".r
     def textMapPropagator: TextMapPropagator[F] = new TextMapPropagator[F] {
@@ -104,45 +122,50 @@ object LocalContextPropagators {
         }
       }
       def extract[A](ctx: Vault, carrier: A)(implicit T: TextMapGetter[A]): Vault = {
-        def fromStrings(traceIdS: String, spanIdS: String, sampleDecisionS: Option[String]): Option[SpanContext] = {
-          (
-            ByteVector.fromHex(traceIdS)
-            .flatTap(bv => Alternative[Option].guard(bv != invalidTraceId)),
-            ByteVector.fromHex(spanIdS)
-            .flatTap(bv => Alternative[Option].guard(bv != invalidSpanId)),
-            sampleDecisionS match {
-              case Some("d") => true.some
-              case Some("1") => true.some
-              case Some("0") => false.some
-              case Some(_) => Option.empty
-              case None => true.some
-            }
-          ).mapN{ case (traceIdBV, spanIdBV, sampled) =>
-            createSpanContext(traceIdBV, traceIdS, spanIdBV, spanIdS, sampled)
-          }
-        }
         T.get(carrier, "b3") match {
           case Some(Extract(traceIdS, spanIdS, sampleDecisionS)) =>
-            fromStrings(traceIdS, spanIdS, sampleDecisionS.some)
+            fromB3Strings(traceIdS, spanIdS, sampleDecisionS.some)
             .map(sc =>
               LocalScoped.insertIntoVault(ctx, LocalScoped.Spanned(sc))
             ).getOrElse(ctx)
           case Some(Extract2(traceIdS, spanIdS)) =>
-            fromStrings(traceIdS, spanIdS, None)
+            fromB3Strings(traceIdS, spanIdS, None)
             .map(sc =>
               LocalScoped.insertIntoVault(ctx, LocalScoped.Spanned(sc))
             ).getOrElse(ctx)
-          case Some(_) => ctx
-          case None => // Fallback to multi header
-            (
-              T.get(carrier, "x-b3-traceid"),
-              T.get(carrier, "x-b3-spanid")
-            ).tupled.flatMap{ case (traceIdS, spanIdS) =>
-              fromStrings(traceIdS, spanIdS, T.get(carrier, "x-b3-sampled"))
-            }.map(sc =>
-              LocalScoped.insertIntoVault(ctx, LocalScoped.Spanned(sc))
-            ).getOrElse(ctx)
+          case Some(_) | None => ctx
         }
+      }
+    }
+  }
+
+  def b3Multi[F[_]: Applicative] = new ContextPropagators[F] {
+    val TraceExtract = "([0-9a-f]{32})".r
+    val SpanExtract = "([0-9a-f]{16})".r
+    def textMapPropagator: TextMapPropagator[F] = new TextMapPropagator[F] {
+      def inject[A](ctx: Vault, carrier: A)(implicit T: TextMapSetter[A]): F[Unit] = {
+        LocalScoped.extractFromVault(ctx) match {
+          case LocalScoped.Root => Applicative[F].unit
+          case LocalScoped.Noop => Applicative[F].unit
+          case LocalScoped.Spanned(spanContext) => Applicative[F].unit.map{_ => // Cheat the evil
+            val sampled = if (spanContext.samplingDecision.isSampled) "1" else "0"
+            T.unsafeSet(carrier, "x-b3-traceid", spanContext.traceIdHex)
+            T.unsafeSet(carrier, "x-b3-spanid", spanContext.spanIdHex)
+            T.unsafeSet(carrier, "x-b3-sampled", sampled)
+          }
+        }
+      }
+      def extract[A](ctx: Vault, carrier: A)(implicit T: TextMapGetter[A]): Vault = {
+        (
+          T.get(carrier, "x-b3-traceid"),
+          T.get(carrier, "x-b3-spanid")
+        ).tupled.flatMap{ 
+          case (TraceExtract(traceIdS), SpanExtract(spanIdS)) =>
+            fromB3Strings(traceIdS, spanIdS, T.get(carrier, "x-b3-sampled"))
+          case (_, _) => None
+        }.map(sc =>
+          LocalScoped.insertIntoVault(ctx, LocalScoped.Spanned(sc))
+        ).getOrElse(ctx)
       }
     }
   }

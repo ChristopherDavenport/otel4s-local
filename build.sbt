@@ -30,7 +30,7 @@ val munitCatsEffectV = "2.0.0-M3"
 
 // Projects
 lazy val `otel4s-local` = tlCrossRootProject
-  .aggregate(core, otel, examples)
+  .aggregate(core, otlp, examples)
 
 lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
@@ -64,9 +64,9 @@ lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     Test / envVars ++= Map("S2N_DONT_MLOCK" -> "1")
   )
 
-lazy val otel = crossProject(JVMPlatform, JSPlatform, NativePlatform)
+lazy val otlp = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
-  .in(file("otel"))
+  .in(file("otlp"))
   .enablePlugins(Http4sGrpcPlugin)
   .enablePlugins(NoPublishPlugin)
   .dependsOn(core)
@@ -91,7 +91,7 @@ lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .enablePlugins(NoPublishPlugin)
   .in(file("examples"))
-  .dependsOn(core, otel)
+  .dependsOn(core, otlp)
   .settings(
     name := "otel4s-local-examples",
     libraryDependencies ++= Seq(

@@ -1,5 +1,6 @@
-package io.chrisdavenport.otel4slocal.otel
+package io.chrisdavenport.otel4slocal.otlp
 
+import cats._
 import cats.syntax.all._
 import cats.effect._
 import cats.effect.std.Random
@@ -11,7 +12,7 @@ import io.chrisdavenport.otel4slocal.trace.{LocalSpan}
 
 import scala.concurrent.duration._
 import org.http4s.ember.client.EmberClientBuilder
-import fs2.{Stream, Chunk}
+import fs2.{Stream, Chunk, Pipe}
 import fs2.io.net.Network
 import io.opentelemetry.proto.collector.trace.v1.trace_service.TraceService
 import org.http4s.Uri
@@ -34,32 +35,31 @@ import io.opentelemetry.proto.common.v1.common.KeyValue
 import io.opentelemetry.proto.common.v1.common.AnyValue
 import com.google.protobuf.ByteString
 import org.typelevel.otel4s.ContextPropagators
+import org.http4s.Headers
+import org.http4s.client.Client
 
-object Http4sGrpcOtel {
+object OTLPExporter {
 
-  def fromLocal[F[_]: Async: Network: Random](
-    local: Local[F, Vault],
-    propagator: ContextPropagators[F],
-    otelUri: Uri,
-    timeoutSpanClose: FiniteDuration = 5.seconds,
-    timeoutChannelProcessClose: FiniteDuration = 5.seconds
-  ): Resource[F, Otel4s[F]] = {
-    EmberClientBuilder.default[F].withHttp2.build.map(TraceService.fromClient(_, otelUri)).flatMap{
-      traceService => 
+  def build[F[_]: Async](
+    baseUri: Uri,
+  ): Resource[F, fs2.Pipe[F, LocalSpan, Nothing]] = {
+    EmberClientBuilder.default[F].withHttp2.build
+      .map(fromClient(_, baseUri, Applicative[F].pure(Headers.empty)))
+  }
 
-      LocalOtel4s.build(
-        local,
-        propagator,
-        {(s: Stream[F, LocalSpan]) => s.chunks.evalMap(processChunk(traceService, _)).drain},
-        timeoutSpanClose,
-        timeoutChannelProcessClose
-      )
+  def fromClient[F[_]: Concurrent](client: Client[F], baseUri: Uri, getHeaders: F[Headers]): fs2.Pipe[F, LocalSpan, Nothing] = {
+    val traceService = TraceService.fromClient(client, baseUri)
+
+    {(s: Stream[F, LocalSpan]) => 
+      s.chunks.evalMap{ chunk =>
+        getHeaders.flatMap{ headers =>
+          processChunk(traceService, chunk, headers)
+        }
+      }.drain
     }
   }
 
-
-
-  def processChunk[F[_]: Concurrent](traceService: TraceService[F], chunk: Chunk[LocalSpan]): F[Unit] = {
+  def processChunk[F[_]: Concurrent](traceService: TraceService[F], chunk: Chunk[LocalSpan], headers: Headers): F[Unit] = {
     val base = chunk.toVector.groupBy(ls => ls.tracerState)
       .toList
       .map{ case (tracerState, localSpans) => 
@@ -80,7 +80,7 @@ object Http4sGrpcOtel {
       }
     val request = ExportTraceServiceRequest(base)
 
-    traceService.`export`(request, org.http4s.Headers.empty).void
+    traceService.`export`(request, headers).void
   }
 
   def attributeTransform(attribute: Attribute[_]): KeyValue = {

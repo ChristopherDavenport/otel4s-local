@@ -30,7 +30,7 @@ val munitCatsEffectV = "2.0.0-M3"
 
 // Projects
 lazy val `otel4s-local` = tlCrossRootProject
-  .aggregate(core, otlp, examples)
+  .aggregate(core, otlp, api, examples)
 
 lazy val core = crossProject(JVMPlatform, JSPlatform, NativePlatform)
   .crossType(CrossType.Pure)

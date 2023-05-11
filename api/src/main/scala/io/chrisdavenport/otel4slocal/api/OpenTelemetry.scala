@@ -45,7 +45,12 @@ object OpenTelemetry {
         }).getOrElse(List.empty))
       disabledKeys <- envNonEmpty("OTEL_EXPERIMENTAL_RESOURCE_DISABLED_KEYS")
 
-      traceExporter <- envNonEmpty("OTEL_TRACES_EXPORTER").map(_.getOrElse("otlp")) // Only supports otlp now
+      traceExporter <- envNonEmpty("OTEL_TRACES_EXPORTER")
+        .map(_.getOrElse("otlp")) // Only supports otlp or none
+      traceSamplerOpt <- envNonEmpty("OTEL_TRACES_SAMPLER")
+        .map(_.getOrElse("parent_bsed_always_on"))
+      traceSamplerArgOpt <- envNonEmpty("OTEL_TRACES_SAMPLER_ARG")
+
 
       defaultEndpoint <- envNonEmpty("OTEL_EXPORTER_OTLP_ENDPOINT")
         .map(_.flatMap(Uri.fromString(_).toOption).getOrElse(uri"http://localhost:4317"))
@@ -57,7 +62,8 @@ object OpenTelemetry {
         )
       defaultOTLPTimeout <- envNonEmpty("OTEL_EXPORTER_OTLP_TIMEOUT")
         .map(_.flatMap(s => Either.catchNonFatal(Duration(s)).toOption).getOrElse(10.seconds)) // Default 10s
-      defaultProtocol <- envNonEmpty("OTEL_EXPORTER_OTLP_PROTOCOL") // Currently only support grpc
+      defaultExporterProtocol <- envNonEmpty("OTEL_EXPORTER_OTLP_PROTOCOL")
+        .map(_.getOrElse("grpc")) // Currently only support grpc
       defaultCertificate <- envNonEmpty("OTEL_EXPORTER_OTLP_CERTIFICATE")
       defaultClientKey <- envNonEmpty("OTEL_EXPORTER_OTLP_CLIENT_KEY")
 
@@ -70,19 +76,25 @@ object OpenTelemetry {
         )
       tracesOTLPTimeout <- envNonEmpty("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT")
         .map(_.flatMap(s => Either.catchNonFatal(Duration(s)).toOption))
-      tracesProtocol <- envNonEmpty("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
+      tracesExporterProtocolOpt <- envNonEmpty("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL")
       tracesCertificate <- envNonEmpty("OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE")
       tracesClientKey <- envNonEmpty("OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY")
       // Custom Trace OTLP Settings
       tracesConcurrency <- envNonEmpty("OTEL_EXPORTER_OTLP_TRACES_BATCH_CONCURRENCY")
         .map(_.flatMap(s => s.toIntOption).getOrElse(10))
 
-      exporter <- OTLPExporter.build(
-        traceEndpointOpt.getOrElse(defaultEndpoint),
-        tracesHeadersOpt.getOrElse(defaultHeaders),
-        tracesOTLPTimeout.getOrElse(defaultOTLPTimeout),
-        concurrency = tracesConcurrency
-      )
+      tracesProtocol = tracesExporterProtocolOpt.getOrElse(defaultExporterProtocol)
+      exporter <- (traceExporter, tracesProtocol) match {
+        case ("none", _) => Resource.pure({(s: fs2.Stream[F, io.chrisdavenport.otel4slocal.trace.LocalSpan]) => s.drain})
+        case ("otlp", "grpc") => OTLPExporter.build(
+          traceEndpointOpt.getOrElse(defaultEndpoint),
+          tracesHeadersOpt.getOrElse(defaultHeaders),
+          tracesOTLPTimeout.getOrElse(defaultOTLPTimeout),
+          concurrency = tracesConcurrency
+        )
+        case (exporter, protocol) =>
+          Resource.pure({(s: fs2.Stream[F, io.chrisdavenport.otel4slocal.trace.LocalSpan]) => s.drain})
+      }
       otel4s <- LocalOtel4s.build(
         local = Local[F, Vault],
         propagator = propagators,
@@ -90,7 +102,6 @@ object OpenTelemetry {
         serviceName = serviceName,
         resourceAttributes = resourceAttributes
       )
-
     } yield otel4s
 
   }

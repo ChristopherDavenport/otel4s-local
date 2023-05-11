@@ -14,6 +14,7 @@ import org.typelevel.vault.Vault
 import io.chrisdavenport.otel4slocal.{LocalOtel4s, LocalContextPropagators}
 import io.chrisdavenport.otel4slocal.otlp.OTLPExporter
 import org.typelevel.ci.CIString
+import io.chrisdavenport.otel4slocal.trace.LocalSpan
 
 
 
@@ -85,17 +86,18 @@ object OpenTelemetry {
 
       tracesProtocol = tracesExporterProtocolOpt.getOrElse(defaultExporterProtocol)
       exporter <- (traceExporter, tracesProtocol) match {
-        case ("none", _) => Resource.pure({(s: fs2.Stream[F, io.chrisdavenport.otel4slocal.trace.LocalSpan]) => s.drain})
-        case ("otlp", "grpc") => OTLPExporter.build(
+        case ("none", _) =>
+          Resource.pure[F, fs2.Pipe[F, LocalSpan, Nothing]]({(s: fs2.Stream[F, LocalSpan]) => s.drain})
+        case ("otlp", "grpc") => OTLPExporter.build[F](
           traceEndpointOpt.getOrElse(defaultEndpoint),
           tracesHeadersOpt.getOrElse(defaultHeaders),
           tracesOTLPTimeout.getOrElse(defaultOTLPTimeout),
           concurrency = tracesConcurrency
         )
         case (exporter, protocol) =>
-          Resource.pure({(s: fs2.Stream[F, io.chrisdavenport.otel4slocal.trace.LocalSpan]) => s.drain})
+          Resource.pure[F, fs2.Pipe[F, LocalSpan, Nothing]]({(s: fs2.Stream[F, LocalSpan]) => s.drain})
       }
-      otel4s <- LocalOtel4s.build(
+      otel4s <- LocalOtel4s.build[F](
         local = Local[F, Vault],
         propagator = propagators,
         exporter = exporter,

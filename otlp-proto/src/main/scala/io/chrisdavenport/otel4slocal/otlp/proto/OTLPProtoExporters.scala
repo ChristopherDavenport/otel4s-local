@@ -140,11 +140,15 @@ object OTLPProtoExporters {
         AnyValue(AnyValue.Value.IntValue(attribute.value.asInstanceOf[Long]))
       case AttributeType.BooleanList => 
         val typedList = attribute.value.asInstanceOf[List[Boolean]]
-        AnyValue(AnyValue.Value.ArrayValue(io.opentelemetry.proto.common.v1.common.ArrayValue(
-          typedList.map( value =>
-            AnyValue(AnyValue.Value.BoolValue(value))
+        AnyValue(value = 
+          AnyValue.Value.ArrayValue(
+            value = io.opentelemetry.proto.common.v1.common.ArrayValue(
+              values = typedList.map( value =>
+                AnyValue(value = AnyValue.Value.BoolValue(value))
+              )
+            )
           )
-        )))
+        )
       case AttributeType.DoubleList =>
         val typedList = attribute.value.asInstanceOf[List[Double]]
         AnyValue(AnyValue.Value.ArrayValue(io.opentelemetry.proto.common.v1.common.ArrayValue(

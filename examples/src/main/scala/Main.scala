@@ -23,6 +23,7 @@ object Main extends CrossPlatformIOApp {
           otel4s.tracerProvider.get("ExampleApp").flatMap{tracer =>
             tracer.spanBuilder("Test").build.use{ span =>
               span.addAttribute(Attribute("test.attribute", "huzzah")) >>
+              span.addAttribute(Attribute("test.list", List("foo", "bar"))) >>
               tracer.spanBuilder("Test2").build.use_ >> // Normal
               tracer.spanBuilder("Resource").wrapResource(
                 Resource.make(tracer.spanBuilder("inside create").build.use_)(_ => tracer.spanBuilder("inside shutdown").build.use_)

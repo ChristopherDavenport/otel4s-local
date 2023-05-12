@@ -147,8 +147,8 @@ lazy val examples = crossProject(JVMPlatform, JSPlatform, NativePlatform)
     ),
     run / fork := true,
     envVars := Map(
-      "OTEL_SERVICE_NAME" -> "otel4s-local-example-http-proto",
-      "OTEL_EXPORTER_OTLP_PROTOCOL" -> "http/protobuf"
+      "OTEL_SERVICE_NAME" -> "otel4s-local-example-http-json",
+      "OTEL_EXPORTER_OTLP_PROTOCOL" -> "http/json"
     )
   ).jsSettings(
     scalaJSLinkerConfig ~= { _.withModuleKind(ModuleKind.CommonJSModule)},

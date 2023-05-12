@@ -19,6 +19,9 @@ import org.http4s.ember.client.EmberClientBuilder
 import org.typelevel.ci.CIString
 import org.http4s.circe._
 import cats.effect.std.{Console}
+import org.typelevel.otel4s.trace.SpanKind
+import org.typelevel.otel4s.trace.SpanKind.Client
+import org.typelevel.otel4s.trace.SpanKind.Server
 
 object OTLPJsonExporters {
 
@@ -33,15 +36,15 @@ object OTLPJsonExporters {
   }
 
   def httpJson[F[_]: Async](client: Client[F], baseUri: Uri, headers: Headers, timeout: Duration, concurrency: Int): fs2.Pipe[F, LocalSpan, Nothing] = {
+    
     {(s: fs2.Stream[F, LocalSpan]) =>
       def process: fs2.Stream[F, Nothing] = s.chunks.parEvalMap(concurrency){ chunk =>
         client.run(
           Request[F](Method.POST, baseUri, HttpVersion.`HTTP/1.1`)
             .withEntity(processChunk(chunk))
         ).use{ resp =>
-          resp.status.isSuccess.pure[F]
+            resp.status.isSuccess.pure[F]
         }.timeout(timeout)
-        .handleError(e => println(e))
       }.drain.handleErrorWith(_ => process)
       process
     }
@@ -135,27 +138,35 @@ object OTLPJsonExporters {
     case AttributeType.BooleanList =>
       val list = value.asInstanceOf[List[Boolean]]
       val typeName = attributeTypeName(AttributeType.Boolean)
-      list.map(bool =>
-        Json.obj(typeName -> bool.asJson)
-      ).asJson
+      Json.obj(
+        "values" -> list.map(bool =>
+          Json.obj(typeName -> bool.asJson)
+        ).asJson
+      )
     case AttributeType.DoubleList =>
       val list = value.asInstanceOf[List[Double]]
       val typeName = attributeTypeName(AttributeType.Double)
-      list.map(double =>
-        Json.obj(typeName -> double.asJson)
-      ).asJson
+      Json.obj(
+        "values" -> list.map(double =>
+          Json.obj(typeName -> double.asJson)
+        ).asJson
+      )
     case AttributeType.StringList =>
       val list = value.asInstanceOf[List[String]]
       val typeName = attributeTypeName(AttributeType.String)
-      list.map(string =>
-        Json.obj(typeName -> string.asJson)
-      ).asJson
+      Json.obj(
+        "values" -> list.map(string =>
+          Json.obj(typeName -> string.asJson)
+        ).asJson
+      )
     case AttributeType.LongList =>
       val list = value.asInstanceOf[List[Long]]
       val typeName = attributeTypeName(AttributeType.Long)
-      list.map(long =>
-        Json.obj(typeName -> long.asJson)
-      ).asJson
+      Json.obj(
+        "values" -> list.map(long =>
+          Json.obj(typeName -> long.asJson)
+        ).asJson
+      )
   }
 
   def convertAttribute(attribute: Attribute[_]): Json = {
@@ -179,7 +190,7 @@ object OTLPJsonExporters {
   def convertEvent(event: LocalEvent): Json = {
     Json.obj(
       "name" -> event.name.asJson,
-      "timeUnixNano" -> event.time.toMicros.toString().asJson,
+      "timeUnixNano" -> (event.time.toMicros * 1000).toString().asJson,
       "attributes" -> event.attributes.map(convertAttribute).asJson,
       "droppedAttributesCount" -> event.droppedAttributes.asJson
     )
@@ -189,50 +200,65 @@ object OTLPJsonExporters {
     case org.typelevel.otel4s.trace.Status.Ok => 1.asJson
     case org.typelevel.otel4s.trace.Status.Error => 2.asJson
   }
+  def convertKind(kind: SpanKind): Json = kind match{
+    case SpanKind.Internal => 1.asJson
+    case SpanKind.Server => 2.asJson
+    case SpanKind.Client => 3.asJson
+    case SpanKind.Producer => 4.asJson
+    case SpanKind.Consumer => 5.asJson
+  }
 
   def convertSpan(span: LocalSpan): Json = {
     Json.obj(
       "traceId" -> span.spanContext.traceIdHex.asJson,
       "spanId" -> span.spanContext.spanIdHex.asJson,
+      "traceState" -> "".asJson,
       "parentSpanId" -> span.parentSpan.map(_.spanIdHex).asJson,
       "name" -> span.mutable.name.asJson,
-      "startTimeUnixNano" -> span.mutable.startTime.toMicros.toString().asJson,
-      "endTimeUnixNano" -> span.mutable.endTime.get.toMicros.toString().asJson,
+      "kind" -> convertKind(span.kind).asJson,
+      "startTimeUnixNano" -> (span.mutable.startTime.toMicros * 1000).toString().asJson,
+      "endTimeUnixNano" -> (span.mutable.endTime.get.toMicros * 1000).toString().asJson,
       "attributes" -> span.mutable.attributes.map(convertAttribute).asJson,
       "droppedAttributesCount" -> span.mutable.droppedAttributes.asJson,
-      "links" -> span.mutable.links.map(convertLink).asJson,
-      "droppedLinksCount" -> span.mutable.droppedLinks.asJson,
+
       "events" -> span.mutable.events.map(convertEvent).asJson,
       "droppedEventsCount" -> span.mutable.droppedEvents.asJson,
+      "links" -> span.mutable.links.map(convertLink).asJson,
+      "droppedLinksCount" -> span.mutable.droppedLinks.asJson,
+
       "status" -> Json.obj(
-        "message" -> span.mutable.statusDescription.asJson,
+        "message" -> span.mutable.statusDescription.getOrElse("").asJson,
         "code" -> convertStatus(span.mutable.status)
       )
     )
   }
 
   def processChunk(chunk: Chunk[LocalSpan]): Json = {
+    val resourceState = chunk.head.get.resourceState
     Json.obj(
-      "resourceSpans" -> chunk.toList.groupBy(_.resourceState).map{
-        case (resourceState, scopes) =>
-          Json.obj(
-            "resource" -> Json.obj(
-              "attributes" -> (
-                Attribute("service.name", resourceState.serviceName) :: resourceState.resourceAttributes
-              ).map(convertAttribute).asJson
-            ),
-            "scopeSpans" -> scopes.groupBy(_.scopeState).map{
-              case (scopeState, spans) =>
-                Json.obj(
-                  "scope" -> Json.obj(
-                    "name" -> scopeState.instrumentationScopeName.asJson,
-                    "version" -> scopeState.version.asJson
-                  ),
-                  "spans" -> spans.map(convertSpan).asJson
-                )
-            }.asJson
-          )
-      }.asJson
-    )
+      "resourceSpans" -> Json.arr(
+        Json.obj(
+          "resource" -> Json.obj(
+            "attributes" -> (
+              Attribute("service.name", resourceState.serviceName) :: resourceState.resourceAttributes
+            ).map(convertAttribute).asJson,
+            "droppedAttributesCount" -> 0.asJson
+          ),
+          "scopeSpans" -> chunk.toVector.groupBy(_.scopeState).map{
+            case (scopeState, spans) =>
+              Json.obj(
+                "scope" -> Json.obj(
+                  "name" -> scopeState.instrumentationScopeName.asJson,
+                  "version" -> scopeState.version.getOrElse("").asJson,
+                  "schemaUrl" -> scopeState.schemaUrl.getOrElse("").asJson,
+                  "attributes" -> List.empty.asJson,
+                  "droppedAttributesCount" -> 0.asJson,
+                ),
+                "spans" -> spans.map(convertSpan).asJson
+              )
+          }.asJson
+        )
+      )
+    ).deepDropNullValues
   }
 }

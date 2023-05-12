@@ -90,11 +90,11 @@ jobs:
 
       - name: Make target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-        run: mkdir -p examples/.native/target api/.js/target target api/.jvm/target .js/target core/.native/target api/.native/target core/.js/target examples/.js/target otlp/.jvm/target core/.jvm/target .jvm/target .native/target examples/.jvm/target otlp/.js/target otlp/.native/target project/target
+        run: mkdir -p examples/.native/target otlp-proto/.jvm/target api/.js/target target api/.jvm/target otlp-proto/.js/target .js/target core/.native/target otlp-proto/.native/target api/.native/target otlp-json/.js/target core/.js/target examples/.js/target otlp-json/.jvm/target otlp-json/.native/target core/.jvm/target .jvm/target .native/target examples/.jvm/target project/target
 
       - name: Compress target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
-        run: tar cf targets.tar examples/.native/target api/.js/target target api/.jvm/target .js/target core/.native/target api/.native/target core/.js/target examples/.js/target otlp/.jvm/target core/.jvm/target .jvm/target .native/target examples/.jvm/target otlp/.js/target otlp/.native/target project/target
+        run: tar cf targets.tar examples/.native/target otlp-proto/.jvm/target api/.js/target target api/.jvm/target otlp-proto/.js/target .js/target core/.native/target otlp-proto/.native/target api/.native/target otlp-json/.js/target core/.js/target examples/.js/target otlp-json/.jvm/target otlp-json/.native/target core/.jvm/target .jvm/target .native/target examples/.jvm/target project/target
 
       - name: Upload target directories
         if: github.event_name != 'pull_request' && (startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main')
